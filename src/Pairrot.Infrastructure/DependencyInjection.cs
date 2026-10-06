@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Pairrot.Infrastructure.Banking;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
@@ -46,6 +47,17 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<PairrotDbContext>();
         services.AddScoped<AuthService>();
         services.AddScoped<UserAdministration>();
+
+        // Only the local stub exists until real email reception is implemented (a later feature).
+        services.AddOptions<InboundEmailOptions>()
+            .Bind(configuration.GetSection(InboundEmailOptions.Section))
+            .Validate(o => o.Provider == InboundEmailOptions.StubProvider,
+                $"{InboundEmailOptions.Section}:Provider must be '{InboundEmailOptions.StubProvider}'.")
+            .Validate(o => InboundEmailOptions.IsReservedTestDomain(o.Domain),
+                $"{InboundEmailOptions.Section}:Domain must be a lowercase reserved test domain such as in.pairrot.test.")
+            .ValidateOnStart();
+        services.AddSingleton<IInboundAddressProvider, StubInboundAddressProvider>();
+        services.AddScoped<BankConnectionService>();
         return services;
     }
 

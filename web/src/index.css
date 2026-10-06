@@ -236,3 +236,49 @@ code.details {
 .list li {
   margin-bottom: 8px;
 }
+
+.badge-archived {
+  background: #e2e8f0;
+  color: var(--muted);
+}
+
+.stub-banner {
+  border: 2px dashed #8a6d00;
+  background: #fffbea;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.field-error {
+  display: block;
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+
+.connection {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.connection.archived {
+  opacity: 0.75;
+}
+
+.connection dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 8px 0;
+}
+
+.connection dt {
+  color: var(--muted);
+}
+
+.connection dd {
+  margin: 0;
+}

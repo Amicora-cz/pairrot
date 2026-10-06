@@ -126,6 +126,117 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.ToTable("user_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Banking.BankConnection", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<DateTimeOffset?>("AddressCreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("address_created_at");
+
+                    b.Property<string>("AddressStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("address_status");
+
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("archived_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("EmailProvider")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("email_provider");
+
+                    b.Property<string>("Iban")
+                        .IsRequired()
+                        .HasMaxLength(34)
+                        .HasColumnType("character varying(34)")
+                        .HasColumnName("iban");
+
+                    b.Property<string>("InboundAddress")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("inbound_address");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("label");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id")
+                        .HasName("pk_bank_connections");
+
+                    b.HasIndex("Iban")
+                        .IsUnique()
+                        .HasDatabaseName("bank_connections_iban_unique");
+
+                    b.HasIndex("InboundAddress")
+                        .IsUnique()
+                        .HasDatabaseName("bank_connections_inbound_address_unique");
+
+                    b.HasIndex("TenantId", "Status", "Id")
+                        .HasDatabaseName("bank_connections_tenant_idx");
+
+                    b.ToTable("bank_connections", null, t =>
+                        {
+                            t.HasCheckConstraint("bank_connections_account_number_not_blank", "btrim(account_number) <> ''");
+
+                            t.HasCheckConstraint("bank_connections_address_consistent", "(address_status = 'not_created' AND inbound_address IS NULL AND address_created_at IS NULL AND email_provider IS NULL) OR (address_status = 'stub_created' AND inbound_address IS NOT NULL AND address_created_at IS NOT NULL AND email_provider = 'stub')");
+
+                            t.HasCheckConstraint("bank_connections_address_status_valid", "address_status IN ('not_created', 'stub_created')");
+
+                            t.HasCheckConstraint("bank_connections_archive_consistent", "(status = 'archived' AND archived_at IS NOT NULL) OR (status <> 'archived' AND archived_at IS NULL)");
+
+                            t.HasCheckConstraint("bank_connections_currency_valid", "currency = 'CZK'");
+
+                            t.HasCheckConstraint("bank_connections_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+
+                            t.HasCheckConstraint("bank_connections_label_not_blank", "label IS NULL OR btrim(label) <> ''");
+
+                            t.HasCheckConstraint("bank_connections_status_valid", "status IN ('active', 'archived')");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -591,6 +702,16 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_user_tokens_users_user_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Banking.BankConnection", b =>
+                {
+                    b.HasOne("Pairrot.Core.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_bank_connections_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>

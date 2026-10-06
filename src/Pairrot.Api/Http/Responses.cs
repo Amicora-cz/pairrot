@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Pairrot.Core.Banking;
 using Pairrot.Core.Tenants;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
@@ -102,4 +103,41 @@ public sealed record AuditEventResponse(
         return new AuditEventResponse(
             e.Id, e.TargetTenantId, e.Action, actor, JsonSerializer.Deserialize<JsonElement>(e.Details), e.CreatedAt);
     }
+}
+
+/// <param name="EmailProvider">
+/// The provider that assigned the address, or the configured one before assignment. <c>stub</c>
+/// means a local test address: no bank email is received.
+/// </param>
+public sealed record BankConnectionResponse(
+    Guid Id,
+    Guid TenantId,
+    string? Label,
+    string AccountNumber,
+    string Iban,
+    string Currency,
+    BankConnectionStatus Status,
+    string EmailProvider,
+    AddressStatus AddressStatus,
+    string? InboundAddress,
+    DateTimeOffset? AddressCreatedAt,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? ArchivedAt)
+{
+    public static BankConnectionResponse From(BankConnection c, string providerName) => new(
+        c.Id,
+        c.TenantId,
+        c.Label,
+        c.AccountNumber,
+        c.Iban,
+        c.Currency,
+        c.Status,
+        c.EmailProvider ?? providerName,
+        c.AddressStatus,
+        c.InboundAddress,
+        c.AddressCreatedAt,
+        c.CreatedAt,
+        c.UpdatedAt,
+        c.ArchivedAt);
 }

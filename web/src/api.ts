@@ -49,6 +49,24 @@ export interface AuditEvent {
   created_at: string
 }
 
+/** `stub_created` means only that a local test address exists; no bank email is received. */
+export interface BankConnection {
+  id: string
+  tenant_id: string
+  label: string | null
+  account_number: string
+  iban: string
+  currency: string
+  status: 'active' | 'archived'
+  email_provider: string
+  address_status: 'not_created' | 'stub_created'
+  inbound_address: string | null
+  address_created_at: string | null
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+}
+
 export interface ListResponse<T> {
   items: T[]
   next_cursor: string | null
@@ -57,11 +75,14 @@ export interface ListResponse<T> {
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  /** The request field a validation error belongs to, when the API names one. */
+  readonly field: string | null
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, field: string | null = null) {
     super(message)
     this.status = status
     this.code = code
+    this.field = field
   }
 }
 
@@ -119,6 +140,7 @@ export async function api<T>(
       response.status,
       payload?.error?.code ?? 'http_error',
       payload?.error?.message ?? `Request failed with status ${response.status}.`,
+      payload?.error?.field ?? null,
     )
     const tenantAccessLost = (response.status === 403 || response.status === 409) && tenantAccessCodes.has(error.code)
     if (!options.silent && (response.status === 401 || tenantAccessLost)) onAuthError(error)

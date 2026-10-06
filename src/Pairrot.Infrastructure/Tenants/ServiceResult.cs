@@ -10,9 +10,13 @@ public enum ServiceErrorKind
 }
 
 /// <param name="Code">Stable machine-readable error code.</param>
-public sealed record ServiceError(ServiceErrorKind Kind, string Code, string Message)
+/// <param name="Field">The request field a validation error belongs to, if any.</param>
+public sealed record ServiceError(ServiceErrorKind Kind, string Code, string Message, string? Field = null)
 {
     public static ServiceError Validation(string message) => new(ServiceErrorKind.Validation, "invalid_request", message);
+
+    public static ServiceError Validation(string code, string field, string message) =>
+        new(ServiceErrorKind.Validation, code, message, field);
 
     public static ServiceError NotFound(string message = "The resource was not found.") =>
         new(ServiceErrorKind.NotFound, "not_found", message);

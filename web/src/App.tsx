@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, refreshAntiforgery, setAuthErrorListener, setExpectedTenant, type SessionSummary } from './api'
 import { Account } from './views/Account'
 import { ApiKeys } from './views/ApiKeys'
+import { BankSettings } from './views/BankSettings'
 import { Configuration } from './views/Configuration'
 import { History } from './views/History'
 import { Login } from './views/Login'
@@ -9,7 +10,7 @@ import { Subtenants } from './views/Subtenants'
 import { TenantPicker } from './views/TenantPicker'
 import { StatusBadge } from './components'
 
-type Tab = 'configuration' | 'keys' | 'subtenants' | 'history' | 'account'
+type Tab = 'configuration' | 'bank' | 'keys' | 'subtenants' | 'history' | 'account'
 
 // Background polling only detects expiry; it is marked so it does not keep the session alive.
 const POLL_MS = 60_000
@@ -130,6 +131,7 @@ export default function App() {
             {(
               [
                 ['configuration', 'Configuration'],
+                ['bank', 'Bank settings'],
                 ['keys', 'API keys'],
                 ...(canManageChildren ? [['subtenants', 'Subtenants']] : []),
                 ['history', 'History'],
@@ -147,6 +149,7 @@ export default function App() {
           {/* Keyed by tenant: switching tenants unmounts the views and clears their data and one-time secrets. */}
           <main key={selected.tenant.id}>
             {activeTab === 'configuration' && <Configuration onChanged={loadSession} />}
+            {activeTab === 'bank' && <BankSettings basePath="/v1/tenant/bank-connections" owner={selected.tenant} />}
             {activeTab === 'keys' && <ApiKeys canIssueManagement={canManageChildren} />}
             {activeTab === 'subtenants' && <Subtenants />}
             {activeTab === 'history' && <History path="/v1/tenant/audit-events" />}

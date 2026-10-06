@@ -61,6 +61,8 @@ public sealed class JsonBody
         }
     }
 
+    public bool Has(string name) => _fields.ContainsKey(name);
+
     /// <summary>Reads an optional string field that may also be explicitly <c>null</c>.</summary>
     public bool TryGetString(string name, out Optional<string?> value, out IResult? error)
     {

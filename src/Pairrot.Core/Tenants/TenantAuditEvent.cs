@@ -25,4 +25,8 @@ public static class AuditActions
     public const string ApiKeyRevoked = "api_key.revoked";
     public const string MembershipAdded = "membership.added";
     public const string MembershipRemoved = "membership.removed";
+    public const string BankConnectionCreated = "bank_connection.created";
+    public const string BankConnectionLabelChanged = "bank_connection.label_changed";
+    public const string BankConnectionAddressAssigned = "bank_connection.address_assigned";
+    public const string BankConnectionArchived = "bank_connection.archived";
 }

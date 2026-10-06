@@ -100,6 +100,32 @@ Content-Type: application/json
 GET {{https}}/v1/tenant/audit-events?limit=20
 X-Pairrot-Tenant-Id: {{tenantId}}
 
+### Bank connections (Feature 3): the same routes exist under /v1/subtenants/{{childId}}/bank-connections.
+@connectionId = replace_with_connection_id
+
+POST {{https}}/v1/tenant/bank-connections
+X-XSRF-TOKEN: {{antiforgeryToken}}
+X-Pairrot-Tenant-Id: {{tenantId}}
+Content-Type: application/json
+
+{
+  "account_number": "19-2000145399/0800",
+  "label": "Main account"
+}
+
+###
+GET {{https}}/v1/tenant/bank-connections?include_archived=true
+X-Pairrot-Tenant-Id: {{tenantId}}
+
+###
+POST {{https}}/v1/tenant/bank-connections/{{connectionId}}/inbound-address
+X-XSRF-TOKEN: {{antiforgeryToken}}
+X-Pairrot-Tenant-Id: {{tenantId}}
+
+###
+GET {{host}}/v1/subtenants/{{childId}}/bank-connections
+Authorization: Bearer {{managementKey}}
+
 ###
 POST {{https}}/v1/auth/logout
 X-XSRF-TOKEN: {{antiforgeryToken}}

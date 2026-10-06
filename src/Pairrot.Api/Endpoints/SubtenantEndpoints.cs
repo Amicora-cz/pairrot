@@ -31,6 +31,7 @@ public static class SubtenantEndpoints
         group.MapPost("/{id:guid}/api-keys", IssueKeyAsync);
         group.MapDelete("/{id:guid}/api-keys/{keyId:guid}", RevokeKeyAsync);
         group.MapGet("/{id:guid}/audit-events", ListAuditEventsAsync).RequireAuthorization(PairrotClaims.Policies.Session);
+        group.MapSubtenantBankConnections();
     }
 
     private static async Task<IResult> CreateAsync(
