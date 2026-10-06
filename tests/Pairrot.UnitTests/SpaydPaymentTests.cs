@@ -73,23 +73,24 @@ public class SpaydPaymentTests
 
     [Theory]
     [InlineData("Yoga October")]
-    [InlineData("Žluťoučký kůň")]
-    [InlineData("100% *paid*")]
-    [InlineData("a*X-VS:999*AM:1.00")]
-    [InlineData("%2A literal")]
-    [InlineData("key:value, 'quotes' & <tags>")]
+    [InlineData("Příliš žluťoučký kůň úpěl ďábelské ódy")]
+    [InlineData("key:value, 'quotes' & <tags> + $ / .")]
     [InlineData("emoji 🧘")]
-    public void Messages_round_trip_through_an_independent_decoder(string message)
+    public void Messages_go_into_the_payload_unchanged(string message)
     {
         var payment = Create(45000, "0000123456", message);
         var fields = SpaydReader.Parse(payment.Payload);
 
         Assert.Equal(message, fields["MSG"]);
-        // A delimiter in the message cannot add or replace a field.
         Assert.Equal(["ACC", "AM", "CC", "X-VS", "MSG"], fields.Keys);
-        Assert.Equal("450.00", fields["AM"]);
-        Assert.Equal("0000123456", fields["X-VS"]);
     }
+
+    [Theory]
+    [InlineData("a*X-VS:999*AM:1.00")] // would add fields
+    [InlineData("100% paid")] // banking apps refuse '%'
+    [InlineData("%2A")]
+    public void Delimiters_and_percent_signs_are_rejected_not_escaped(string message) =>
+        AssertError(SpaydPayment.Create(Iban, 100, "CZK", null, message), PaymentErrors.InvalidMessage, "message");
 
     [Fact]
     public void Messages_are_trimmed_and_blank_ones_omitted()
@@ -105,9 +106,10 @@ public class SpaydPaymentTests
         Assert.Equal(new string('A', 60), Create(100, message: new string('A', 60)).Message);
         AssertError(SpaydPayment.Create(Iban, 100, "CZK", null, new string('A', 61)), PaymentErrors.MessageTooLong, "message");
 
-        // Each 'ř' encodes as %C5%99, so 10 of them fill 60 characters and 11 do not.
-        Assert.NotNull(Create(100, message: new string('ř', 10)).Message);
-        AssertError(SpaydPayment.Create(Iban, 100, "CZK", null, new string('ř', 11)), PaymentErrors.MessageTooLong, "message");
+        // Characters are counted, not UTF-8 bytes: accented letters and emoji count once.
+        Assert.NotNull(Create(100, message: new string('ř', 60)).Message);
+        Assert.NotNull(Create(100, message: string.Concat(Enumerable.Repeat("🧘", 60))).Message);
+        AssertError(SpaydPayment.Create(Iban, 100, "CZK", null, new string('ř', 61)), PaymentErrors.MessageTooLong, "message");
     }
 
     [Theory]
@@ -136,7 +138,8 @@ public class SpaydPaymentTests
 
 /// <summary>
 /// A minimal SPAYD reader written from the format description, independent of the encoder:
-/// split on <c>*</c>, take each key up to the first <c>:</c>, then percent-decode the value.
+/// split on <c>*</c>, take each key up to the first <c>:</c>, then percent-decode the value
+/// as the format allows (Pairrot never emits escapes, so values come back unchanged).
 /// </summary>
 internal static class SpaydReader
 {

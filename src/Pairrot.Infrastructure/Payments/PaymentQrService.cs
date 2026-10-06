@@ -40,11 +40,14 @@ public class PaymentQrService(BankConnectionService banks)
         return new PaymentQr(connection.Value!, check.Payment! with { Iban = connection.Value!.Iban });
     }
 
-    /// <summary>A black-on-white PNG with a quiet zone, error correction level M as QR Platba recommends.</summary>
+    /// <summary>
+    /// A black-on-white PNG with a quiet zone, error correction level M as QR Platba recommends.
+    /// The payload is encoded as UTF-8 bytes, so Czech letters in the message survive.
+    /// </summary>
     public static byte[] RenderPng(string payload)
     {
         using var generator = new QRCodeGenerator();
-        using var data = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
+        using var data = generator.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M, forceUtf8: true);
         return new PngByteQRCode(data).GetGraphic(PixelsPerModule, [0, 0, 0], [255, 255, 255], drawQuietZones: true);
     }
 }

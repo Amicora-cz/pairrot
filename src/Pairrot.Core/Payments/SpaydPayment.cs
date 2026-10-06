@@ -34,8 +34,8 @@ public sealed record SpaydPayment(string Iban, long Amount, string Currency, str
 
     public const int MaxVariableSymbolLength = 10;
 
-    /// <summary>The format's MSG limit, applied to the encoded value so nothing is ever truncated.</summary>
-    public const int MaxEncodedMessageLength = 60;
+    /// <summary>The format's MSG limit in characters. Longer messages are rejected, never truncated.</summary>
+    public const int MaxMessageLength = 60;
 
     /// <summary>The complete payload, e.g. <c>SPD*1.0*ACC:CZ65...*AM:450.00*CC:CZK*X-VS:0000123456*MSG:Yoga</c>.</summary>
     public string Payload
@@ -53,7 +53,7 @@ public sealed record SpaydPayment(string Iban, long Amount, string Currency, str
 
             if (Message is not null)
             {
-                payload.Append("*MSG:").Append(EncodeValue(Message));
+                payload.Append("*MSG:").Append(Message);
             }
 
             return payload.ToString();
@@ -96,15 +96,19 @@ public sealed record SpaydPayment(string Iban, long Amount, string Currency, str
         {
             trimmed = null;
         }
+        else if (trimmed.IndexOfAny(ReservedCharacters) >= 0)
+        {
+            return Fail(PaymentErrors.InvalidMessage, "message",
+                "message cannot contain '*' or '%': '*' separates payment fields and banking apps do not accept '%'.");
+        }
         else if (!trimmed.EnumerateRunes().All(IsAllowed))
         {
             return Fail(PaymentErrors.InvalidMessage, "message", "message cannot contain control characters or invalid Unicode text.");
         }
-        else if (EncodeValue(trimmed).Length is var length && length > MaxEncodedMessageLength)
+        else if (trimmed.EnumerateRunes().Count() is var length && length > MaxMessageLength)
         {
             return Fail(PaymentErrors.MessageTooLong, "message",
-                $"message takes {length} characters once encoded for the QR code; at most {MaxEncodedMessageLength} fit. "
-                + "Accented letters and symbols take 3 to 12 characters each.");
+                $"message has {length} characters; at most {MaxMessageLength} fit into the payment.");
         }
 
         return new SpaydParseResult(new SpaydPayment(iban, minor, CzechBankAccount.Currency, variableSymbol, trimmed), null);
@@ -115,31 +119,11 @@ public sealed record SpaydPayment(string Iban, long Amount, string Currency, str
         string.Create(CultureInfo.InvariantCulture, $"{minor / 100}.{minor % 100:D2}");
 
     /// <summary>
-    /// Encodes a value so it decodes back to exactly the same text: printable ASCII stays as it is,
-    /// while the <c>*</c> delimiter, the <c>%</c> escape character, and everything else become
-    /// percent-encoded UTF-8. A value can therefore never start another field.
+    /// Characters a message cannot contain. QR Platba would percent-encode them, but banking apps
+    /// tested so far (George) show the escapes literally and refuse to send the payment; other
+    /// text, including Czech letters, goes into the payload unchanged as UTF-8.
     /// </summary>
-    public static string EncodeValue(string value)
-    {
-        var encoded = new StringBuilder(value.Length);
-        Span<byte> utf8 = stackalloc byte[4];
-        foreach (var rune in value.EnumerateRunes())
-        {
-            if (rune.Value is >= 0x20 and <= 0x7E && rune.Value != '*' && rune.Value != '%')
-            {
-                encoded.Append((char)rune.Value);
-                continue;
-            }
-
-            var count = rune.EncodeToUtf8(utf8);
-            foreach (var b in utf8[..count])
-            {
-                encoded.Append('%').Append(b.ToString("X2", CultureInfo.InvariantCulture));
-            }
-        }
-
-        return encoded.ToString();
-    }
+    private static readonly char[] ReservedCharacters = ['*', '%'];
 
     private static bool IsAllowed(Rune rune) =>
         rune != Rune.ReplacementChar && !Rune.IsControl(rune) && Rune.GetUnicodeCategory(rune) is not

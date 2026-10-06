@@ -139,15 +139,22 @@ public class PaymentQrTests(PairrotFixture fx)
                 "variable_symbol", symbol == "123" ? "invalid_request" : "invalid_variable_symbol");
         }
 
-        // Czech text and delimiters round-trip without adding fields; long messages are refused, also by the PNG endpoint.
-        const string message = "Kůň*X-VS:9*AM:1 100%";
+        // Czech text goes in unchanged; delimiters and '%' are refused rather than escaped; long messages are refused too.
+        const string message = "Příliš žluťoučký kůň: 1+1 / ok";
         var payload = await PayloadAsync(client, path, new { amount = 100, currency = "CZK", message = $"  {message} " });
-        Assert.Equal("SPD*1.0*ACC:", payload[..12]);
+        Assert.EndsWith($"*MSG:{message}", payload);
         Assert.Equal(6, payload.Split('*').Length); // SPD, 1.0, ACC, AM, CC, MSG
-        Assert.Equal(message, Uri.UnescapeDataString(payload[(payload.IndexOf("*MSG:", StringComparison.Ordinal) + 5)..]));
         Assert.DoesNotContain("MSG", await PayloadAsync(client, path, new { amount = 100, currency = "CZK", message = "   " }));
+        var png = await client.PostAsJsonAsync($"{path}.png", new { amount = 100, currency = "CZK", message });
+        Assert.Equal(payload, Decode(await png.Content.ReadAsByteArrayAsync()));
 
-        await ExpectFieldErrorAsync(client.PostAsJsonAsync(path, new { amount = 100, currency = "CZK", message = new string('ž', 11) }),
+        foreach (var invalid in new[] { "a*X-VS:999*AM:1.00", "100% paid" })
+        {
+            await ExpectFieldErrorAsync(client.PostAsJsonAsync(path, new { amount = 100, currency = "CZK", message = invalid }),
+                "message", "invalid_message");
+        }
+
+        await ExpectFieldErrorAsync(client.PostAsJsonAsync(path, new { amount = 100, currency = "CZK", message = new string('ž', 61) }),
             "message", "message_too_long");
         var pngError = await client.PostAsJsonAsync($"{path}.png", new { amount = 100, currency = "CZK", message = new string('x', 61) });
         Assert.Equal("application/json", pngError.Content.Headers.ContentType?.MediaType);

@@ -94,6 +94,7 @@ export function PaymentQrPanel({ basePath, connection, owner }: { basePath: stri
         <label>
           Message for the recipient (optional)
           <input placeholder="Yoga October" value={form.message} onChange={(e) => edit({ message: e.target.value })} />
+          <span className="muted">Up to 60 characters; Czech letters are fine, * and % are not allowed.</span>
           {fieldError('message')}
         </label>
         <ErrorText error={generalError} />
