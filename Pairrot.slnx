@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Pairrot.Admin/Pairrot.Admin.csproj" />
+    <Project Path="src/Pairrot.Api/Pairrot.Api.csproj" />
+    <Project Path="src/Pairrot.Core/Pairrot.Core.csproj" />
+    <Project Path="src/Pairrot.Infrastructure/Pairrot.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Pairrot.IntegrationTests/Pairrot.IntegrationTests.csproj" />
+    <Project Path="tests/Pairrot.UnitTests/Pairrot.UnitTests.csproj" />
+  </Folder>
+</Solution>

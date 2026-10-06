@@ -1,0 +1,61 @@
+@host = http://localhost:5034
+# Keys printed by: dotnet run --project src/Pairrot.Admin -- setup
+@tenantKey = prt_replace_me
+@managementKey = prt_replace_me
+@childId = 00000000-0000-0000-0000-000000000000
+
+GET {{host}}/health
+
+###
+GET {{host}}/v1/tenant
+Authorization: Bearer {{tenantKey}}
+
+###
+PATCH {{host}}/v1/tenant/configuration
+Authorization: Bearer {{tenantKey}}
+Content-Type: application/json
+
+{
+  "contact_email": "info@example.com"
+}
+
+###
+POST {{host}}/v1/subtenants
+Authorization: Bearer {{managementKey}}
+Content-Type: application/json
+
+{
+  "external_id": "studio_123",
+  "name": "Studio Balance",
+  "contact_email": "studio@example.com"
+}
+
+###
+GET {{host}}/v1/subtenants?limit=50
+Authorization: Bearer {{managementKey}}
+
+###
+PATCH {{host}}/v1/subtenants/{{childId}}
+Authorization: Bearer {{managementKey}}
+Content-Type: application/json
+
+{
+  "status": "suspended"
+}
+
+###
+POST {{host}}/v1/subtenants/{{childId}}/api-keys
+Authorization: Bearer {{managementKey}}
+Content-Type: application/json
+
+{
+  "label": "rotation"
+}
+
+###
+GET {{host}}/v1/subtenants/{{childId}}/api-keys
+Authorization: Bearer {{managementKey}}
+
+###
+DELETE {{host}}/v1/subtenants/{{childId}}
+Authorization: Bearer {{managementKey}}

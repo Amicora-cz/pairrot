@@ -1,0 +1,24 @@
+# Local development only. Production will use Neon PostgreSQL instead of this container;
+# the app picks the database via ConnectionStrings__Pairrot.
+name: pairrot
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pairrot}
+      POSTGRES_USER: ${POSTGRES_USER:-pairrot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pairrot}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pairrot-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pairrot-db:
