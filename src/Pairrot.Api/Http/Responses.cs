@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Pairrot.Core.Tenants;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Users;
 
 namespace Pairrot.Api.Http;
 
@@ -52,3 +54,52 @@ public sealed record IssuedApiKeyResponse(
 public sealed record CreatedSubtenantResponse(TenantResponse Tenant, IssuedApiKeyResponse ApiKey);
 
 public sealed record ListResponse<T>(IReadOnlyList<T> Items, Guid? NextCursor);
+
+public sealed record AntiforgeryResponse(string Token, string HeaderName);
+
+public sealed record UserResponse(Guid Id, string Email);
+
+public sealed record SessionInfoResponse(
+    DateTimeOffset CreatedAt, DateTimeOffset LastActivityAt, DateTimeOffset IdleExpiresAt, DateTimeOffset AbsoluteExpiresAt);
+
+/// <param name="Blocked">The tenant or its parent is suspended; operations for it are refused.</param>
+public sealed record MembershipResponse(string Role, bool Blocked, TenantResponse Tenant);
+
+/// <summary>The signed-in user and their access. Never contains the cookie or any secret.</summary>
+public sealed record SessionSummaryResponse(
+    UserResponse User,
+    SessionInfoResponse Session,
+    Guid? SelectedTenantId,
+    IReadOnlyList<MembershipResponse> Memberships)
+{
+    public static SessionSummaryResponse From(SessionSummary summary)
+    {
+        var session = summary.Current.Session;
+        return new SessionSummaryResponse(
+            new UserResponse(session.UserId, summary.Current.Email),
+            new SessionInfoResponse(session.CreatedAt, session.LastActivityAt, session.IdleExpiresAt, session.AbsoluteExpiresAt),
+            summary.Current.Tenant?.Id,
+            summary.Memberships.Select(m => new MembershipResponse(m.Membership.Role, m.Blocked, TenantResponse.From(m.Tenant))).ToList());
+    }
+}
+
+/// <param name="Type"><c>user</c>, <c>api_key</c>, or <c>administrator</c>.</param>
+public sealed record AuditActorResponse(string Type, Guid? UserId, string? Email, Guid? ApiKeyId, string? Description);
+
+public sealed record AuditEventResponse(
+    Guid Id, Guid TenantId, string Action, AuditActorResponse Actor, JsonElement Details, DateTimeOffset CreatedAt)
+{
+    public static AuditEventResponse From(AuditEventView view)
+    {
+        var e = view.Event;
+        var actor = e switch
+        {
+            { ActorUserId: { } userId } => new AuditActorResponse("user", userId, view.ActorUserEmail, null, null),
+            { ActorApiKeyId: { } keyId } => new AuditActorResponse("api_key", null, null, keyId, null),
+            _ => new AuditActorResponse("administrator", null, null, null, e.ActorDescription),
+        };
+
+        return new AuditEventResponse(
+            e.Id, e.TargetTenantId, e.Action, actor, JsonSerializer.Deserialize<JsonElement>(e.Details), e.CreatedAt);
+    }
+}

@@ -40,7 +40,7 @@ public static class TenantRules
         }
 
         var trimmed = email.Trim();
-        if (trimmed.Length == 0 || trimmed.Length > MaxEmailLength || !IsEmail(trimmed))
+        if (trimmed.Length == 0 || trimmed.Length > MaxEmailLength || !IsValidEmail(trimmed))
         {
             return "contact_email is not a valid email address.";
         }
@@ -48,7 +48,8 @@ public static class TenantRules
         return null;
     }
 
-    private static bool IsEmail(string value)
+    /// <summary>A plain <c>local@domain.tld</c> address without display names or whitespace.</summary>
+    public static bool IsValidEmail(string value)
     {
         if (value.Any(char.IsWhiteSpace) || value.Count(c => c == '@') != 1)
         {

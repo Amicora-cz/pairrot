@@ -56,6 +56,7 @@ public sealed class ApiKeyAuthenticationHandler(
 
         var identity = new ClaimsIdentity(
         [
+            new Claim(PairrotClaims.AuthMethod, PairrotClaims.ApiKeyMethod),
             new Claim(PairrotClaims.TenantId, tenant.Id.ToString()),
             new Claim(PairrotClaims.ApiKeyId, key.Id.ToString()),
             new Claim(PairrotClaims.Purpose, key.Purpose.ToString()),
@@ -72,9 +73,5 @@ public sealed class ApiKeyAuthenticationHandler(
             "A valid API key is required (Authorization: Bearer <key>).");
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
-        Context.User.IsBlocked()
-            ? ApiErrors.WriteAsync(Context, StatusCodes.Status403Forbidden, "tenant_suspended",
-                "The tenant or its parent is not active.")
-            : ApiErrors.WriteAsync(Context, StatusCodes.Status403Forbidden, "forbidden",
-                "This API key is not permitted to use this endpoint.");
+        PairrotAuth.WriteForbiddenAsync(Context);
 }

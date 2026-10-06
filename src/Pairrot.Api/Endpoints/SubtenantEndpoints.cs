@@ -6,7 +6,10 @@ using Pairrot.Infrastructure.Tenants;
 
 namespace Pairrot.Api.Endpoints;
 
-/// <summary>Management of the caller's direct children. Every lookup is scoped to the caller.</summary>
+/// <summary>
+/// Management of the caller's direct children, with a management key or a parent administrator's
+/// session. Every lookup is scoped to the caller.
+/// </summary>
 public static class SubtenantEndpoints
 {
     private static readonly HashSet<string> CreateFields = ["external_id", "name", "contact_email"];
@@ -15,7 +18,9 @@ public static class SubtenantEndpoints
 
     public static void MapSubtenantEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/v1/subtenants").RequireAuthorization(PairrotClaims.Policies.ManagementKey);
+        var group = app.MapGroup("/v1/subtenants")
+            .RequireAuthorization(PairrotClaims.Policies.TenantManagement)
+            .AddEndpointFilter<TenantContextFilter>();
 
         group.MapPost("", CreateAsync);
         group.MapGet("", ListAsync);
@@ -25,6 +30,7 @@ public static class SubtenantEndpoints
         group.MapGet("/{id:guid}/api-keys", ListKeysAsync);
         group.MapPost("/{id:guid}/api-keys", IssueKeyAsync);
         group.MapDelete("/{id:guid}/api-keys/{keyId:guid}", RevokeKeyAsync);
+        group.MapGet("/{id:guid}/audit-events", ListAuditEventsAsync).RequireAuthorization(PairrotClaims.Policies.Session);
     }
 
     private static async Task<IResult> CreateAsync(
@@ -61,23 +67,9 @@ public static class SubtenantEndpoints
         HttpRequest request, ClaimsPrincipal user, TenantService tenants, CancellationToken ct)
     {
         var query = request.Query;
-
-        var limit = TenantService.DefaultPageSize;
-        if (query.TryGetValue("limit", out var limitValue)
-            && (!int.TryParse(limitValue, out limit) || limit < 1 || limit > TenantService.MaxPageSize))
+        if (!Paging.TryRead(query, TenantService.DefaultPageSize, TenantService.MaxPageSize, out var limit, out var cursor, out var error))
         {
-            return ApiErrors.Validation($"limit must be an integer between 1 and {TenantService.MaxPageSize}.");
-        }
-
-        Guid? cursor = null;
-        if (query.TryGetValue("cursor", out var cursorValue))
-        {
-            if (!Guid.TryParse(cursorValue, out var parsed))
-            {
-                return ApiErrors.Validation("cursor is invalid.");
-            }
-
-            cursor = parsed;
+            return error!;
         }
 
         TenantStatus? status = null;
@@ -174,6 +166,21 @@ public static class SubtenantEndpoints
     {
         var result = await tenants.RevokeSubtenantKeyAsync(user.GetTenantId(), id, keyId, user.GetActor(), ct);
         return result.Error is { } failure ? ApiErrors.From(failure) : Results.NoContent();
+    }
+
+    private static async Task<IResult> ListAuditEventsAsync(
+        Guid id, HttpRequest request, ClaimsPrincipal user, TenantService tenants, CancellationToken ct)
+    {
+        if (!Paging.TryRead(request.Query, TenantService.DefaultPageSize, TenantService.MaxPageSize, out var limit, out var cursor, out var error))
+        {
+            return error!;
+        }
+
+        var result = await tenants.ListSubtenantAuditEventsAsync(user.GetTenantId(), id, limit, cursor, ct);
+        return result.Error is { } failure
+            ? ApiErrors.From(failure)
+            : Results.Ok(new ListResponse<AuditEventResponse>(
+                result.Value!.Items.Select(AuditEventResponse.From).ToList(), result.Value.NextCursor));
     }
 
     private static bool TryParseStatus(string? value, out TenantStatus status)

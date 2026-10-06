@@ -3,6 +3,7 @@ namespace Pairrot.Core.Tenants;
 public class TenantAuditEvent
 {
     public Guid Id { get; set; }
+    public Guid? ActorUserId { get; set; }
     public Guid? ActorApiKeyId { get; set; }
     public string? ActorDescription { get; set; }
     public Guid TargetTenantId { get; set; }
@@ -22,4 +23,6 @@ public static class AuditActions
     public const string TenantDeleted = "tenant.deleted";
     public const string ApiKeyIssued = "api_key.issued";
     public const string ApiKeyRevoked = "api_key.revoked";
+    public const string MembershipAdded = "membership.added";
+    public const string MembershipRemoved = "membership.removed";
 }

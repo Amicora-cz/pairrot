@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Pairrot.Core.Tenants;
+using Pairrot.Infrastructure.Users;
 
 namespace Pairrot.Infrastructure.Persistence;
 
-// Mirrors docs/features/001-tenants-schema.sql.
+// Tenant tables mirror docs/features/001-tenants-schema.sql; user tables are added by Feature 002
+// (see UserConfigurations.cs).
 
 internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
 {
@@ -86,9 +88,11 @@ internal sealed class TenantAuditEventConfiguration : IEntityTypeConfiguration<T
     {
         builder.ToTable("tenant_audit_events", t =>
         {
+            // Exactly one actor: a signed-in user, an API key, or a named administrative operation.
             t.HasCheckConstraint(
-                "tenant_audit_actor_required",
-                "actor_api_key_id IS NOT NULL OR (actor_description IS NOT NULL AND btrim(actor_description) <> '')");
+                "tenant_audit_actor_exactly_one",
+                "num_nonnulls(actor_user_id, actor_api_key_id, actor_description) = 1 "
+                + "AND (actor_description IS NULL OR btrim(actor_description) <> '')");
             t.HasCheckConstraint("tenant_audit_action_not_blank", "btrim(action) <> ''");
             t.HasCheckConstraint("tenant_audit_details_object", "jsonb_typeof(details) = 'object'");
         });
@@ -102,6 +106,11 @@ internal sealed class TenantAuditEventConfiguration : IEntityTypeConfiguration<T
         builder.HasOne<TenantApiKey>()
             .WithMany()
             .HasForeignKey(e => e.ActorApiKeyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<PairrotUser>()
+            .WithMany()
+            .HasForeignKey(e => e.ActorUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Tenant>()

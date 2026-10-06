@@ -15,6 +15,9 @@ public sealed record TenantChange(
 
 public sealed record Page<T>(IReadOnlyList<T> Items, Guid? NextCursor);
 
+/// <summary>An audit event with the email of the user who performed it, if any.</summary>
+public sealed record AuditEventView(TenantAuditEvent Event, string? ActorUserEmail);
+
 /// <summary>
 /// Tenant operations. Every method is scoped either to the caller's own tenant or to the
 /// direct children of an owner; callers are authorized by the API layer before calling.
@@ -24,7 +27,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
     public const int DefaultPageSize = 50;
     public const int MaxPageSize = 200;
 
-    private static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web)
+    internal static readonly JsonSerializerOptions AuditJson = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     };
@@ -123,14 +126,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
         }
 
         // IDs are UUIDv7, so ordering by ID is ordering by creation time.
-        var items = await query.OrderBy(t => t.Id).Take(limit + 1).ToListAsync(ct);
-        var hasMore = items.Count > limit;
-        if (hasMore)
-        {
-            items.RemoveAt(items.Count - 1);
-        }
-
-        return new Page<Tenant>(items, hasMore ? items[^1].Id : null);
+        return await ToPageAsync(query.OrderBy(t => t.Id), t => t.Id, limit, ct);
     }
 
     public Task<Tenant?> FindSubtenantAsync(Guid ownerId, Guid childId, CancellationToken ct = default) =>
@@ -226,19 +222,85 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
     {
         var key = await db.ApiKeys.SingleOrDefaultAsync(
             k => k.Id == keyId && k.TenantId == childId && k.Tenant!.ParentTenantId == ownerId, ct);
-        if (key is null)
+        return key is null ? ServiceError.NotFound() : await RevokeAsync(key, actor, ct);
+    }
+
+    /// <summary>Change history of a direct child, newest first.</summary>
+    public async Task<ServiceResult<Page<AuditEventView>>> ListSubtenantAuditEventsAsync(
+        Guid ownerId, Guid childId, int limit, Guid? before, CancellationToken ct = default)
+    {
+        if (await FindSubtenantAsync(ownerId, childId, ct) is null)
         {
             return ServiceError.NotFound();
         }
 
-        if (key.RevokedAt is not null)
+        return await ListAuditEventsAsync(childId, limit, before, ct);
+    }
+
+    public async Task<IReadOnlyList<TenantApiKey>> ListOwnKeysAsync(Guid tenantId, CancellationToken ct = default) =>
+        await db.ApiKeys.AsNoTracking()
+            .Where(k => k.TenantId == tenantId)
+            .OrderBy(k => k.CreatedAt).ThenBy(k => k.Id)
+            .ToListAsync(ct);
+
+    /// <summary>
+    /// Issues a key for the caller's own tenant. A management key requires a root tenant that can
+    /// create subtenants, under the same hierarchy rules as Feature 001.
+    /// </summary>
+    public async Task<ServiceResult<IssuedApiKey>> IssueOwnKeyAsync(
+        Guid tenantId, ApiKeyPurpose purpose, string? label, Actor actor, CancellationToken ct = default)
+    {
+        if (TenantRules.ValidateLabel(label) is { } error)
         {
-            return true;
+            return ServiceError.Validation(error);
         }
 
-        key.RevokedAt = Now();
-        AddAudit(actor, childId, AuditActions.ApiKeyRevoked, new { KeyId = key.Id });
-        return await SaveAsync(true, ct);
+        var tenant = await FindAsync(tenantId, ct);
+        if (tenant is null)
+        {
+            return ServiceError.NotFound();
+        }
+
+        if (tenant.Status == TenantStatus.Deleted)
+        {
+            return TenantDeleted();
+        }
+
+        if (purpose == ApiKeyPurpose.Management && !(tenant.IsRoot && tenant.CanCreateSubtenants))
+        {
+            return ServiceError.Forbidden("Management keys require a root tenant that can create subtenants.");
+        }
+
+        var issued = AddKey(tenantId, purpose, label, actor);
+        return await SaveAsync(issued, ct);
+    }
+
+    /// <summary>Revokes one of the caller's own keys. Repeating it has no further effect.</summary>
+    public async Task<ServiceResult<bool>> RevokeOwnKeyAsync(
+        Guid tenantId, Guid keyId, Actor actor, CancellationToken ct = default)
+    {
+        var key = await db.ApiKeys.SingleOrDefaultAsync(k => k.Id == keyId && k.TenantId == tenantId, ct);
+        return key is null ? ServiceError.NotFound() : await RevokeAsync(key, actor, ct);
+    }
+
+    /// <summary>Change history of one tenant, newest first.</summary>
+    public async Task<Page<AuditEventView>> ListAuditEventsAsync(
+        Guid tenantId, int limit, Guid? before, CancellationToken ct = default)
+    {
+        var events = db.AuditEvents.AsNoTracking().Where(e => e.TargetTenantId == tenantId);
+        if (before is { } cursor)
+        {
+            events = events.Where(e => e.Id.CompareTo(cursor) < 0);
+        }
+
+        var query =
+            from e in events
+            join u in db.Users on e.ActorUserId equals (Guid?)u.Id into actors
+            from u in actors.DefaultIfEmpty()
+            orderby e.Id descending
+            select new AuditEventView(e, u != null ? u.Email : null);
+
+        return await ToPageAsync(query, v => v.Event.Id, limit, ct);
     }
 
     internal IssuedApiKey AddKey(Guid tenantId, ApiKeyPurpose purpose, string? label, Actor actor)
@@ -263,6 +325,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
         db.AuditEvents.Add(new TenantAuditEvent
         {
             Id = Guid.CreateVersion7(),
+            ActorUserId = actor.UserId,
             ActorApiKeyId = actor.ApiKeyId,
             ActorDescription = actor.Description,
             TargetTenantId = targetTenantId,
@@ -335,6 +398,32 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
 
         tenant.UpdatedAt = Now();
         return await SaveAsync(tenant, ct);
+    }
+
+    private async Task<ServiceResult<bool>> RevokeAsync(TenantApiKey key, Actor actor, CancellationToken ct)
+    {
+        if (key.RevokedAt is not null)
+        {
+            return true;
+        }
+
+        key.RevokedAt = Now();
+        AddAudit(actor, key.TenantId, AuditActions.ApiKeyRevoked, new { KeyId = key.Id });
+        return await SaveAsync(true, ct);
+    }
+
+    /// <summary>Reads one item more than requested to know whether another page exists.</summary>
+    private static async Task<Page<T>> ToPageAsync<T>(
+        IQueryable<T> ordered, Func<T, Guid> id, int limit, CancellationToken ct)
+    {
+        var items = await ordered.Take(limit + 1).ToListAsync(ct);
+        var hasMore = items.Count > limit;
+        if (hasMore)
+        {
+            items.RemoveAt(items.Count - 1);
+        }
+
+        return new Page<T>(items, hasMore ? id(items[^1]) : null);
     }
 
     private async Task<ServiceResult<T>> SaveAsync<T>(T value, CancellationToken ct)

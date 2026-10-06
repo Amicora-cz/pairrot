@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Pairrot.Core.Tenants;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Users;
 using Testcontainers.PostgreSql;
 
 namespace Pairrot.IntegrationTests;
@@ -49,12 +51,47 @@ public sealed class PairrotFixture : IAsyncLifetime
     }
 
     /// <summary>A fresh API host against the same database (simulates an application restart).</summary>
-    public WebApplicationFactory<Program> CreateFactory() =>
+    public WebApplicationFactory<Program> CreateFactory(int loginRateLimitPermits = 100_000) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
             builder.UseSetting("ConnectionStrings:Pairrot", ConnectionString);
+            // All test logins share one client address; throttling has its own test.
+            builder.UseSetting("Auth:LoginRateLimitPermits", loginRateLimitPermits.ToString(CultureInfo.InvariantCulture));
         });
+
+    public const string Password = "correct horse battery staple";
+
+    /// <summary>Creates a user with <see cref="Password"/> and admin memberships in the given tenants.</summary>
+    public async Task<string> CreateUserAsync(params Guid[] tenantIds)
+    {
+        var email = $"{Guid.NewGuid():N}@users.example.com";
+        using var scope = Factory.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserAdministration>();
+        var created = await users.CreateUserAsync(email, Password, "integration-tests");
+        Assert.Null(created.Error);
+        foreach (var tenantId in tenantIds)
+        {
+            var granted = await users.GrantAdminAsync(email, tenantId.ToString(), "integration-tests");
+            Assert.Null(granted.Error);
+        }
+
+        return email;
+    }
+
+    public async Task<T> WithUsersAsync<T>(Func<UserAdministration, Task<T>> action)
+    {
+        using var scope = Factory.Services.CreateScope();
+        return await action(scope.ServiceProvider.GetRequiredService<UserAdministration>());
+    }
+
+    /// <summary>A browser signed in as a new user who administers the given tenants.</summary>
+    public async Task<BrowserClient> SignInAsync(params Guid[] tenantIds)
+    {
+        var browser = new BrowserClient(Factory);
+        await browser.LoginAsync(await CreateUserAsync(tenantIds));
+        return browser;
+    }
 
     public async Task<RootSetupResult> SetupRootAsync(string externalId)
     {

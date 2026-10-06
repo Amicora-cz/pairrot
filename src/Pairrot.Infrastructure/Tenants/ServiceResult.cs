@@ -5,6 +5,8 @@ public enum ServiceErrorKind
     Validation,
     NotFound,
     Conflict,
+    Unauthorized,
+    Forbidden,
 }
 
 /// <param name="Code">Stable machine-readable error code.</param>
@@ -16,6 +18,8 @@ public sealed record ServiceError(ServiceErrorKind Kind, string Code, string Mes
         new(ServiceErrorKind.NotFound, "not_found", message);
 
     public static ServiceError Conflict(string code, string message) => new(ServiceErrorKind.Conflict, code, message);
+
+    public static ServiceError Forbidden(string message) => new(ServiceErrorKind.Forbidden, "forbidden", message);
 }
 
 public readonly record struct ServiceResult<T>
@@ -40,11 +44,12 @@ public readonly record struct Optional<T>(bool HasValue, T Value)
     public static implicit operator Optional<T>(T value) => new(true, value);
 }
 
-/// <summary>Who performed a change: an API key, or an administrator without one.</summary>
-public sealed record Actor(Guid? ApiKeyId, string? Description)
+/// <summary>Who performed a change: exactly one of a signed-in user, an API key, or a named administrative operation.</summary>
+public sealed record Actor(Guid? UserId, Guid? ApiKeyId, string? Description)
 {
-    public static Actor Key(Guid apiKeyId) => new(apiKeyId, null);
-    public static Actor Administrator(string description) => new(null, description);
+    public static Actor User(Guid userId) => new(userId, null, null);
+    public static Actor Key(Guid apiKeyId) => new(null, apiKeyId, null);
+    public static Actor Administrator(string description) => new(null, null, description);
 }
 
 /// <summary>A newly created key. <see cref="Secret"/> is returned once and never stored.</summary>

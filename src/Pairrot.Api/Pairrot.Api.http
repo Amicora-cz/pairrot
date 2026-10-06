@@ -59,3 +59,47 @@ Authorization: Bearer {{managementKey}}
 ###
 DELETE {{host}}/v1/subtenants/{{childId}}
 Authorization: Bearer {{managementKey}}
+
+### Browser sessions (Feature 2) need HTTPS because the session cookie is Secure.
+### Run the API with --launch-profile https. The client keeps cookies between requests.
+@https = https://localhost:7017
+@antiforgeryToken = replace_with_token_from_antiforgery_response
+@tenantId = replace_with_selected_tenant_id
+
+GET {{https}}/v1/auth/antiforgery
+
+###
+POST {{https}}/v1/auth/login
+X-XSRF-TOKEN: {{antiforgeryToken}}
+Content-Type: application/json
+
+{
+  "email": "you@example.com",
+  "password": "your password"
+}
+
+### Get a new antiforgery token after login; it is bound to the signed-in user.
+GET {{https}}/v1/auth/session
+
+###
+GET {{https}}/v1/tenant/api-keys
+X-Pairrot-Tenant-Id: {{tenantId}}
+
+###
+POST {{https}}/v1/tenant/api-keys
+X-XSRF-TOKEN: {{antiforgeryToken}}
+X-Pairrot-Tenant-Id: {{tenantId}}
+Content-Type: application/json
+
+{
+  "purpose": "management",
+  "label": "issued in the browser"
+}
+
+###
+GET {{https}}/v1/tenant/audit-events?limit=20
+X-Pairrot-Tenant-Id: {{tenantId}}
+
+###
+POST {{https}}/v1/auth/logout
+X-XSRF-TOKEN: {{antiforgeryToken}}
