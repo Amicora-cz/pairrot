@@ -282,3 +282,40 @@ code.details {
 .connection dd {
   margin: 0;
 }
+
+.payment-qr {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+
+.payment-qr h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.qr-preview {
+  margin-top: 12px;
+}
+
+/* Shown at its natural size, without smoothing, so every module stays sharp and scannable. */
+.qr-preview img {
+  display: block;
+  max-width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+}
+
+.qr-preview .payload {
+  word-break: break-all;
+}
+
+a.button {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}

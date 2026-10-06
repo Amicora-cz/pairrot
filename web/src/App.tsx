@@ -149,7 +149,7 @@ export default function App() {
           {/* Keyed by tenant: switching tenants unmounts the views and clears their data and one-time secrets. */}
           <main key={selected.tenant.id}>
             {activeTab === 'configuration' && <Configuration onChanged={loadSession} />}
-            {activeTab === 'bank' && <BankSettings basePath="/v1/tenant/bank-connections" owner={selected.tenant} />}
+            {activeTab === 'bank' && <BankSettings key={selected.tenant.id} basePath="/v1/tenant/bank-connections" owner={selected.tenant} />}
             {activeTab === 'keys' && <ApiKeys canIssueManagement={canManageChildren} />}
             {activeTab === 'subtenants' && <Subtenants />}
             {activeTab === 'history' && <History path="/v1/tenant/audit-events" />}

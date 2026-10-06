@@ -67,6 +67,21 @@ export interface BankConnection {
   archived_at: string | null
 }
 
+/** Payment data for a QR code. Generating one stores nothing and does not track the payment. */
+export interface PaymentQr {
+  bank_connection_id: string
+  tenant_id: string
+  account_number: string
+  iban: string
+  /** Minor units: 45000 is CZK 450.00. */
+  amount: number
+  currency: string
+  variable_symbol: string | null
+  message: string | null
+  format: 'SPAYD'
+  payload: string
+}
+
 export interface ListResponse<T> {
   items: T[]
   next_cursor: string | null
@@ -113,12 +128,9 @@ export async function refreshAntiforgery() {
 
 const tenantAccessCodes = new Set(['tenant_context_changed', 'tenant_not_selected', 'forbidden'])
 
-export async function api<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-  path: string,
-  body?: unknown,
-  options: { background?: boolean; silent?: boolean } = {},
-): Promise<T> {
+type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
+
+async function send(method: Method, path: string, body: unknown, options: { background?: boolean; silent?: boolean }) {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (method !== 'GET' && antiforgeryToken) headers['X-XSRF-TOKEN'] = antiforgeryToken
@@ -132,10 +144,8 @@ export async function api<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
-  if (response.status === 204) return undefined as T
-
-  const payload = await response.json().catch(() => null)
   if (!response.ok) {
+    const payload = await response.json().catch(() => null)
     const error = new ApiError(
       response.status,
       payload?.error?.code ?? 'http_error',
@@ -147,5 +157,25 @@ export async function api<T>(
     throw error
   }
 
-  return payload as T
+  return response
+}
+
+export async function api<T>(
+  method: Method,
+  path: string,
+  body?: unknown,
+  options: { background?: boolean; silent?: boolean } = {},
+): Promise<T> {
+  const response = await send(method, path, body, options)
+  if (response.status === 204) return undefined as T
+  return (await response.json().catch(() => null)) as T
+}
+
+/** POSTs a JSON body and returns the PNG it produces; anything that is not a PNG is an error. */
+export async function apiPng(path: string, body: unknown): Promise<Blob> {
+  const response = await send('POST', path, body, {})
+  if (response.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png') {
+    throw new ApiError(response.status, 'unexpected_response', 'The server did not return a PNG image.')
+  }
+  return response.blob()
 }

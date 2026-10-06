@@ -199,7 +199,7 @@ function ChildDetail({ child, onChanged, onDeleted }: { child: Tenant; onChanged
         </Section>
       )}
       {/* A suspended child can be inspected but not changed; a deleted child's connections are history. */}
-      <BankSettings basePath={`/v1/subtenants/${child.id}/bank-connections`} owner={child} readOnly={child.status !== 'active'} />
+      <BankSettings key={child.id} basePath={`/v1/subtenants/${child.id}/bank-connections`} owner={child} readOnly={child.status !== 'active'} />
       <History path={`/v1/subtenants/${child.id}/audit-events`} title="Subtenant history" />
     </>
   )

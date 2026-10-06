@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pairrot.Infrastructure.Banking;
+using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
@@ -58,6 +59,7 @@ public static class DependencyInjection
             .ValidateOnStart();
         services.AddSingleton<IInboundAddressProvider, StubInboundAddressProvider>();
         services.AddScoped<BankConnectionService>();
+        services.AddScoped<PaymentQrService>();
         return services;
     }
 

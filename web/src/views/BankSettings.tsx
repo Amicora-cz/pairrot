@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type BankConnection, type ListResponse, type Tenant } from '../api'
 import { ErrorText, Section } from '../components'
 import { formatDate, useAction } from '../util'
+import { PaymentQrPanel } from './PaymentQr'
 
 const STUB_NOTICE = 'Test address — real bank emails are not received yet.'
 
@@ -46,7 +47,7 @@ export function BankSettings({ basePath, owner, readOnly = false }: { basePath: 
       <ErrorText error={error} />
       {connections.length === 0 && !busy && <p className="muted">No bank connections yet.</p>}
       {connections.map((c) => (
-        <ConnectionCard key={c.id} basePath={basePath} connection={c} readOnly={readOnly} onChanged={replace} onArchived={() => run(reload)} />
+        <ConnectionCard key={c.id} basePath={basePath} owner={owner} connection={c} readOnly={readOnly} onChanged={replace} onArchived={() => run(reload)} />
       ))}
     </Section>
   )
@@ -116,12 +117,14 @@ function AddConnection({ basePath, onCreated }: { basePath: string; onCreated: (
 
 function ConnectionCard({
   basePath,
+  owner,
   connection: c,
   readOnly,
   onChanged,
   onArchived,
 }: {
   basePath: string
+  owner: Tenant
   connection: BankConnection
   readOnly: boolean
   onChanged: (c: BankConnection) => void
@@ -129,6 +132,7 @@ function ConnectionCard({
 }) {
   const [label, setLabel] = useState(c.label ?? '')
   const [copied, setCopied] = useState(false)
+  const [showQr, setShowQr] = useState(false)
   const { busy, error, run } = useAction()
   const path = `${basePath}/${c.id}`
   const archived = c.status === 'archived'
@@ -204,6 +208,9 @@ function ConnectionCard({
               Save label
             </button>
           </form>
+          <button className="secondary" onClick={() => setShowQr(!showQr)}>
+            {showQr ? 'Close payment QR' : 'Generate payment QR'}
+          </button>
           <button
             className="danger"
             disabled={busy}
@@ -220,6 +227,7 @@ function ConnectionCard({
         </div>
       )}
       <ErrorText error={error} />
+      {canChange && showQr && <PaymentQrPanel basePath={basePath} connection={c} owner={owner} />}
     </div>
   )
 }

@@ -126,6 +126,29 @@ X-Pairrot-Tenant-Id: {{tenantId}}
 GET {{host}}/v1/subtenants/{{childId}}/bank-connections
 Authorization: Bearer {{managementKey}}
 
+### Payment QR (Feature 4): JSON payment data and SPAYD payload; the same body at .../payment-qr.png returns the image.
+POST {{https}}/v1/tenant/bank-connections/{{connectionId}}/payment-qr
+X-XSRF-TOKEN: {{antiforgeryToken}}
+X-Pairrot-Tenant-Id: {{tenantId}}
+Content-Type: application/json
+
+{
+  "amount": 45000,
+  "currency": "CZK",
+  "variable_symbol": "0000123456",
+  "message": "Yoga October"
+}
+
+###
+POST {{host}}/v1/subtenants/{{childId}}/bank-connections/{{connectionId}}/payment-qr.png
+Authorization: Bearer {{managementKey}}
+Content-Type: application/json
+
+{
+  "amount": 45000,
+  "currency": "CZK"
+}
+
 ###
 POST {{https}}/v1/auth/logout
 X-XSRF-TOKEN: {{antiforgeryToken}}

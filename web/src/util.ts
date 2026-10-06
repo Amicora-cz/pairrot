@@ -27,3 +27,17 @@ export function useAction() {
   }, [])
   return { busy, error, run, setError }
 }
+
+/**
+ * Converts a typed CZK amount ("450", "450.5", "1 250,00") to minor units with integer arithmetic
+ * only. Returns null when the text is not a plain amount with at most two decimal places.
+ */
+export function toMinorUnits(text: string): number | null {
+  const match = /^(\d{1,7})(?:[.,](\d{1,2}))?$/.exec(text.replace(/\s/g, ''))
+  if (!match) return null
+  return Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'))
+}
+
+export function formatMinorUnits(minor: number, currency: string) {
+  return `${currency} ${Math.trunc(minor / 100).toLocaleString('en-US')}.${String(minor % 100).padStart(2, '0')}`
+}

@@ -365,7 +365,7 @@ public class BankConnectionTests(PairrotFixture fx)
     }
 
     /// <summary>A random account that passes the CNB check-digit rule, so tests never collide.</summary>
-    private static CzechBankAccount NewAccount()
+    internal static CzechBankAccount NewAccount()
     {
         int[] weights = [6, 3, 7, 9, 10, 5, 8, 4, 2, 1];
         while (true)

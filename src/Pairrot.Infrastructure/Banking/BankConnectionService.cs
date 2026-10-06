@@ -257,6 +257,35 @@ public class BankConnectionService(PairrotDbContext db, TenantService tenants, I
         }
     }
 
+    /// <summary>
+    /// A connection that may receive new payments: it is active and its tenant is active. A
+    /// suspended child stays visible to its parent but cannot be paid.
+    /// </summary>
+    public async Task<ServiceResult<BankConnection>> GetPayableAsync(
+        Guid callerTenantId, Guid? subtenantId, Guid connectionId, CancellationToken ct = default)
+    {
+        if (await FindOwnerAsync(callerTenantId, subtenantId, ct) is not { } owner)
+        {
+            return ServiceError.NotFound();
+        }
+
+        var connection = await db.BankConnections.AsNoTracking()
+            .SingleOrDefaultAsync(b => b.Id == connectionId && b.TenantId == owner.Id, ct);
+        if (connection is null)
+        {
+            return ServiceError.NotFound();
+        }
+
+        return owner.Status switch
+        {
+            TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot receive payments."),
+            TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended and cannot receive payments."),
+            _ when connection.Status == BankConnectionStatus.Archived =>
+                Archived("An archived bank connection cannot be used for new payments."),
+            _ => connection,
+        };
+    }
+
     private Task<Tenant?> FindOwnerAsync(Guid callerTenantId, Guid? subtenantId, CancellationToken ct) =>
         subtenantId is { } childId
             ? tenants.FindSubtenantAsync(callerTenantId, childId, ct)

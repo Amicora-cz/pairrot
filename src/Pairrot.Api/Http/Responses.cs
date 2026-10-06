@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Pairrot.Core.Banking;
+using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
+using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
 
@@ -140,4 +142,33 @@ public sealed record BankConnectionResponse(
         c.CreatedAt,
         c.UpdatedAt,
         c.ArchivedAt);
+}
+
+/// <summary>
+/// Payment data for a QR code. The summary fields and <see cref="Payload"/> come from the same
+/// validated values; <c>format</c> is always <c>SPAYD</c> (Czech QR Platba).
+/// </summary>
+public sealed record PaymentQrResponse(
+    Guid BankConnectionId,
+    Guid TenantId,
+    string AccountNumber,
+    string Iban,
+    long Amount,
+    string Currency,
+    string? VariableSymbol,
+    string? Message,
+    string Format,
+    string Payload)
+{
+    public static PaymentQrResponse From(PaymentQr qr) => new(
+        qr.Connection.Id,
+        qr.Connection.TenantId,
+        qr.Connection.AccountNumber,
+        qr.Payment.Iban,
+        qr.Payment.Amount,
+        qr.Payment.Currency,
+        qr.Payment.VariableSymbol,
+        qr.Payment.Message,
+        SpaydPayment.FormatName,
+        qr.Payment.Payload);
 }

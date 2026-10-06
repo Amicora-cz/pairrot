@@ -63,6 +63,35 @@ public sealed class JsonBody
 
     public bool Has(string name) => _fields.ContainsKey(name);
 
+    /// <summary>
+    /// Reads an optional whole-number field that may also be explicitly <c>null</c>. Fractions,
+    /// exponents, strings, and values outside the 64-bit range are rejected, never rounded.
+    /// </summary>
+    public bool TryGetInteger(string name, out Optional<long?> value, out IResult? error)
+    {
+        value = Optional<long?>.Unset;
+        error = null;
+
+        if (!_fields.TryGetValue(name, out var element))
+        {
+            return true;
+        }
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Null:
+                value = new Optional<long?>(true, null);
+                return true;
+            case JsonValueKind.Number when element.TryGetInt64(out var number):
+                value = new Optional<long?>(true, number);
+                return true;
+            default:
+                error = ApiErrors.Result(StatusCodes.Status400BadRequest, "invalid_request",
+                    $"Field '{name}' must be a whole number.", name);
+                return false;
+        }
+    }
+
     /// <summary>Reads an optional string field that may also be explicitly <c>null</c>.</summary>
     public bool TryGetString(string name, out Optional<string?> value, out IResult? error)
     {
@@ -83,7 +112,7 @@ public sealed class JsonBody
                 value = new Optional<string?>(true, element.GetString());
                 return true;
             default:
-                error = ApiErrors.Validation($"Field '{name}' must be a string.");
+                error = ApiErrors.Result(StatusCodes.Status400BadRequest, "invalid_request", $"Field '{name}' must be a string.", name);
                 return false;
         }
     }

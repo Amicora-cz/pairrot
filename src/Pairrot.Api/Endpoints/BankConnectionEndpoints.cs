@@ -3,6 +3,7 @@ using Pairrot.Api.Auth;
 using Pairrot.Api.Http;
 using Pairrot.Core.Banking;
 using Pairrot.Infrastructure.Banking;
+using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Tenants;
 
 namespace Pairrot.Api.Endpoints;
@@ -27,6 +28,9 @@ public static class BankConnectionEndpoints
 
     private static readonly HashSet<string> UpdateFields = ["label", .. ImmutableFields];
 
+    /// <summary>The receiving account always comes from the saved connection, so account fields are unknown here.</summary>
+    private static readonly HashSet<string> PaymentQrFields = ["amount", "currency", "variable_symbol", "message"];
+
     /// <summary>Maps <c>/bank-connections</c> under the current tenant.</summary>
     public static void MapTenantBankConnections(this RouteGroupBuilder tenantGroup) =>
         Map(tenantGroup.MapGroup("/bank-connections"));
@@ -43,6 +47,8 @@ public static class BankConnectionEndpoints
         group.MapPatch("/{id:guid}", UpdateAsync);
         group.MapDelete("/{id:guid}", ArchiveAsync);
         group.MapPost("/{id:guid}/inbound-address", AssignAddressAsync);
+        group.MapPost("/{id:guid}/payment-qr", PaymentQrAsync);
+        group.MapPost("/{id:guid}/payment-qr.png", PaymentQrPngAsync);
     }
 
     private static async Task<IResult> ListAsync(
@@ -129,6 +135,52 @@ public static class BankConnectionEndpoints
     private static async Task<IResult> AssignAddressAsync(
         Guid id, HttpContext http, ClaimsPrincipal user, BankConnectionService banks, CancellationToken ct) =>
         ToResponse(await banks.AssignAddressAsync(user.GetTenantId(), Subtenant(http), id, user.GetActor(), ct), banks);
+
+    private static async Task<IResult> PaymentQrAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, PaymentQrService qr, CancellationToken ct)
+    {
+        var (result, error) = await GeneratePaymentQrAsync(id, http, user, qr, ct);
+        return result is null ? error! : Results.Ok(PaymentQrResponse.From(result));
+    }
+
+    private static async Task<IResult> PaymentQrPngAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, PaymentQrService qr, CancellationToken ct)
+    {
+        var (result, error) = await GeneratePaymentQrAsync(id, http, user, qr, ct);
+        if (result is null)
+        {
+            return error!;
+        }
+
+        var name = result.Payment.VariableSymbol is { } symbol ? $"payment-qr-{symbol}.png" : "payment-qr.png";
+        return Results.File(PaymentQrService.RenderPng(result.Payment.Payload), "image/png", name);
+    }
+
+    /// <summary>Shared by the JSON and PNG endpoints, so both validate and authorize identically.</summary>
+    private static async Task<(PaymentQr? Result, IResult? Error)> GeneratePaymentQrAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, PaymentQrService qr, CancellationToken ct)
+    {
+        // Payment details are private to the payer and payee; keep them out of shared caches.
+        http.Response.Headers.CacheControl = "no-store";
+
+        var (body, error) = await JsonBody.ReadAsync(http.Request, PaymentQrFields);
+        if (body is null)
+        {
+            return (null, error);
+        }
+
+        if (!body.TryGetInteger("amount", out var amount, out error)
+            || !body.TryGetString("currency", out var currency, out error)
+            || !body.TryGetString("variable_symbol", out var variableSymbol, out error)
+            || !body.TryGetString("message", out var message, out error))
+        {
+            return (null, error);
+        }
+
+        var input = new PaymentQrInput(amount.Value, currency.Value, variableSymbol.Value, message.Value);
+        var result = await qr.GenerateAsync(user.GetTenantId(), Subtenant(http), id, input, ct);
+        return result.Error is { } failure ? (null, ApiErrors.From(failure)) : (result.Value, null);
+    }
 
     private static IResult ToResponse(ServiceResult<BankConnection> result, BankConnectionService banks) =>
         result.Error is { } failure
