@@ -229,14 +229,16 @@ public class BankMessageParsingTests
     }
 
     [Fact] // §2: the selected bank has no verified samples yet
-    public void Ceska_sporitelna_is_installed_but_recognizes_nothing_until_samples_are_verified()
+    public void Profiles_without_verified_templates_or_senders_recognize_nothing()
     {
-        var profile = new CeskaSporitelnaProfile();
-        var result = Evaluate(Message(SyntheticBankProfile.Notice(Incoming()), from: "Česká spořitelna <info@csas.cz>"), profile);
+        var empty = new SyntheticBankProfile { Parts = [] };
+        var result = Evaluate(Message(SyntheticBankProfile.Notice(Incoming())), empty);
 
         Assert.Equal((ParseOutcome.Unsupported, ParseReasons.NoVerifiedTemplates), (result.Outcome, result.PrimaryReason.Code));
-        Assert.Equal(TrustDecision.Untrusted, result.Trust!.Decision);
-        Assert.Contains(result.Trust.Reasons, r => r.Code == ParseReasons.NoVerifiedSenders);
+        var noSenders = SourceTrust.Assess(Message(SyntheticBankProfile.Notice(Incoming())), SenderPolicy.None);
+        Assert.Contains(noSenders.Reasons, r => r.Code == ParseReasons.NoVerifiedSenders);
+
+        var profile = new CeskaSporitelnaProfile();
         Assert.Equal(("ceska_sporitelna", "0800"), (profile.Name, profile.BankCode));
         Assert.Same(profile, new BankProfileRegistry([profile]).For(Account));
     }

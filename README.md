@@ -10,7 +10,7 @@ Implemented so far:
 - **Feature 4: payment QR generation** ([spec](docs/features/004-payment-qr-generation.md)): Czech QR Platba (SPAYD) payloads and PNG codes for saved accounts
 - **Feature 5: expected payments** ([spec](docs/features/005-expected-payments.md)): saved payment requests with a reservation reference, frozen payment instructions, edits, and cancellation
 - **Feature 6: inbound email reception** ([spec](docs/features/006-inbound-email-reception.md)): a provider-independent intake with Resend as the first live adapter, verified webhooks, a startup and hourly recovery check for missed webhooks, routing to bank connections, and stored source content retrieved by a background worker. Live reception through a real Resend account is not verified yet (see [below](#inbound-email))
-- **Feature 7: bank messages to incoming transactions, in progress** ([spec](docs/features/007-bank-message-parsing.md)): the bank-independent parser pipeline is implemented. It covers parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is installed but recognizes nothing yet, because no verified notification samples exist (see [below](#bank-message-parsing))
+- **Feature 7: bank messages to incoming transactions, in progress** ([spec](docs/features/007-bank-message-parsing.md)): the bank-independent parser pipeline is implemented. It covers parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is provisional: it is built from public descriptions of the George e-mail and is not yet verified against a real notification (see [below](#bank-message-parsing))
 
 The target architecture is described in [docs/architektura.md](docs/architektura.md) (in Czech).
 
@@ -252,7 +252,16 @@ Every attempt is an immutable `message_parse_runs` row. It records the source di
 
 Transactions carry `evidence` (`live`, `test`, or `fixture`) from the message's instance. Nothing in this feature changes a payment request or sends a webhook. Only `accepted` records with `live` evidence may ever be matched later.
 
-The selected bank is Česká spořitelna (`ceska_sporitelna`, bank code 0800), but no real notification samples have been obtained yet. The profile therefore trusts no sender and has no template, and every Česká spořitelna message is recorded as `unsupported` (`no_verified_templates`). Sender identities, templates, formats, masking, and any transaction reference must come from sanitized real samples kept as fixtures. Until then, live bank support is unverified (Feature 7 acceptance criteria 1 and 12). The automated tests run the common pipeline against a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
+The selected bank is Česká spořitelna (`ceska_sporitelna` `0.2.0-provisional`, bank code 0800). No real notification sample has been obtained yet. The profile is therefore built only from public descriptions of George's "Informační zprávy → Příchozí platby" e-mail: the sender `ceskasporitelna@csas.cz`, the subject "Přišla platba", the opening sentence "na účet … právě dorazila platba ve výši … Kč", and an "Informace o transakci" block.
+
+- **Trust:** a `csas.cz` From address with DMARC `pass` is required.
+- **Amount and account:** they are read only from the opening sentence, never from the balance line.
+- **Other fields:** the symbol, counterparty, message, and booking date come from likely Czech labels. A missing booking date, a masked or different account, or any other doubt requires review.
+- **Debits:** "odešla platba" is classified as a debit.
+- **Bank reference:** none is assumed.
+- **Forwarded copies:** copies forwarded from a personal mailbox are never trusted. George must send the notification directly to the Pairrot address, which ČS allows only as the main contact e-mail.
+
+The unit tests use messages reconstructed from those descriptions, not real samples. Live bank support stays unverified until a real direct-delivery notification has been parsed and kept as a sanitized fixture (Feature 7 acceptance criteria 1 and 12). The pipeline tests use a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
 
 ## Administrative CLI
 
