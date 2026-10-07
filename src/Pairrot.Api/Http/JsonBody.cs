@@ -155,6 +155,46 @@ public sealed class JsonBody
         return true;
     }
 
+    /// <summary>Reads a boolean field; <c>false</c> when it is not a JSON boolean.</summary>
+    public bool TryGetBoolean(string name, out bool value)
+    {
+        value = false;
+        if (_fields.TryGetValue(name, out var element) && element.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            value = element.GetBoolean();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Reads a required array of UUID strings.</summary>
+    public bool TryGetGuidList(string name, out List<Guid> value, out IResult? error)
+    {
+        value = [];
+        error = null;
+        if (_fields.TryGetValue(name, out var element) && element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || !Guid.TryParse(item.GetString(), out var id))
+                {
+                    break;
+                }
+
+                value.Add(id);
+            }
+
+            if (value.Count == element.GetArrayLength())
+            {
+                return true;
+            }
+        }
+
+        error = ApiErrors.Result(StatusCodes.Status400BadRequest, "invalid_request", $"Field '{name}' must be an array of IDs.", name);
+        return false;
+    }
+
     /// <summary>Reads an optional string field that may also be explicitly <c>null</c>.</summary>
     public bool TryGetString(string name, out Optional<string?> value, out IResult? error)
     {

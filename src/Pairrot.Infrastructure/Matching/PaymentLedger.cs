@@ -10,6 +10,7 @@ using Pairrot.Core.Transactions;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Webhooks;
 
 namespace Pairrot.Infrastructure.Matching;
 
@@ -42,7 +43,8 @@ public sealed class MatchingOptionsValidator(IHostEnvironment environment) : IVa
 /// (<see cref="LockConnectionAsync"/>): allocation or revocation, transaction handling, the
 /// recalculated request, the payment change, and the audit event are saved together or not at all.
 /// </summary>
-public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, IOptions<MatchingOptions> options)
+public class PaymentLedger(
+    PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, WebhookRouter webhooks, IOptions<MatchingOptions> options)
 {
     public static readonly Actor SystemActor = Actor.Administrator(ActorLabels.System);
 
@@ -86,8 +88,8 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
     /// Allocates the whole transaction to the request. The caller has checked eligibility under the
     /// connection lock; this checks only the arithmetic and records the consequences.
     /// </summary>
-    public ServiceResult<PaymentAllocation> Allocate(
-        IncomingTransaction transaction, PaymentRequest request, AllocationMethod method, string? reason, Actor actor)
+    public async Task<ServiceResult<PaymentAllocation>> AllocateAsync(
+        IncomingTransaction transaction, PaymentRequest request, AllocationMethod method, string? reason, Actor actor, CancellationToken ct)
     {
         if (PaymentSummary.Add(request.PaidAmount, transaction.Amount) is not { } paid)
         {
@@ -121,9 +123,9 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
         request.Status = PaymentSummary.StatusFor(request.Amount, paid);
         request.Version++;
         request.UpdatedAt = now;
-        AddChange(request, before,
+        await AddChangeAsync(request, before,
             method == AllocationMethod.Automatic ? PaymentChangeCause.AutomaticAllocation : PaymentChangeCause.ManualAllocation,
-            allocation.Id, transaction.Id, allocation.Evidence, actor);
+            allocation.Id, transaction.Id, allocation.Evidence, actor, ct);
 
         tenants.AddAudit(actor, transaction.TenantId, AuditActions.PaymentAllocated, new
         {
@@ -142,9 +144,9 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
     /// Revokes an active allocation, keeping it as history, and recalculates the request. The
     /// released transaction is not matched automatically again until someone enables it.
     /// </summary>
-    public void Revoke(
+    public async Task RevokeAsync(
         PaymentAllocation allocation, IncomingTransaction transaction, PaymentRequest request,
-        string code, string? reason, Actor actor, PaymentChangeCause cause)
+        string code, string? reason, Actor actor, PaymentChangeCause cause, CancellationToken ct)
     {
         var paid = PaymentSummary.Add(request.PaidAmount, -allocation.Amount)
             ?? throw new InvalidOperationException($"Payment request {request.Id} would have a negative paid amount.");
@@ -168,7 +170,7 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
         request.Status = PaymentSummary.StatusFor(request.Amount, paid);
         request.Version++;
         request.UpdatedAt = now;
-        AddChange(request, before, cause, allocation.Id, transaction.Id, allocation.Evidence, actor);
+        await AddChangeAsync(request, before, cause, allocation.Id, transaction.Id, allocation.Evidence, actor, ct);
 
         tenants.AddAudit(actor, transaction.TenantId, AuditActions.PaymentAllocationRevoked, new
         {
@@ -199,19 +201,22 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
         var allocation = await db.PaymentAllocations
             .SingleAsync(a => a.TransactionId == transaction.Id && a.State == AllocationState.Active, ct);
         var request = await db.PaymentRequests.SingleAsync(r => r.Id == allocation.PaymentRequestId, ct);
-        Revoke(allocation, transaction, request, RevocationCodes.TransactionReviewRequired,
+        await RevokeAsync(allocation, transaction, request, RevocationCodes.TransactionReviewRequired,
             "The transaction needs review; it is not counted until a person allocates it again.",
-            SystemActor, PaymentChangeCause.TransactionReviewRequired);
+            SystemActor, PaymentChangeCause.TransactionReviewRequired, ct);
     }
 
-    /// <summary>Appends the next payment change of the request; <paramref name="before"/> is its summary before the change.</summary>
-    public void AddChange(
+    /// <summary>
+    /// Appends the next payment change of the request (<paramref name="before"/> is its summary
+    /// before the change) and, in the same transaction, its webhook event and deliveries (Feature 010).
+    /// </summary>
+    public async Task AddChangeAsync(
         PaymentRequest request, PaymentSummary before, PaymentChangeCause cause, Guid? allocationId, Guid? transactionId,
-        string? evidence, Actor actor)
+        string? evidence, Actor actor, CancellationToken ct)
     {
         request.ChangeSequence++;
         var after = PaymentSummary.Of(request);
-        db.PaymentChanges.Add(new PaymentChange
+        var change = new PaymentChange
         {
             Id = Guid.CreateVersion7(),
             TenantId = request.TenantId,
@@ -235,6 +240,8 @@ public class PaymentLedger(PairrotDbContext db, BackgroundJobQueue jobs, TenantS
             Evidence = evidence,
             Actor = Label(actor),
             CreatedAt = Now(),
-        });
+        };
+        db.PaymentChanges.Add(change);
+        await webhooks.RouteAsync(change, ct);
     }
 }

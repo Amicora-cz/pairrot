@@ -15,10 +15,8 @@ Implemented so far:
 
 - **Feature 9: payment matching and manual review** ([spec](docs/features/009-payment-matching-and-review.md)): exact automatic matching, manual allocations and corrections, paid/partially paid/overpaid totals, review of duplicates, disputes, and unverified notifications, idempotent manual commands, and a durable payment-change journal (see [below](#payment-matching-and-review)). A live end-to-end match against a real Česká spořitelna notification is not recorded yet
 
-Planned next:
-
-- **Feature 10: payment-status webhooks** ([spec](docs/features/010-payment-status-webhooks.md)), covering signed owner/child payment updates, durable delivery, secret rotation, history, and manual retry/replay for NaLekci integration.
-- **Feature 11: simple webhook delivery retries** ([spec](docs/features/011-webhook-delivery-retries.md)), adding three automatic retries after 5 seconds, 60 seconds, and 1 hour, with restart-safe scheduling and visible failure after four total attempts.
+- **Feature 10: payment-status webhooks** ([spec](docs/features/010-payment-status-webhooks.md)): signed `payment_request.updated` events for the owner and a parent subscribed to its direct children, durable delivery history, signing-key rotation, test probes, and manual retry, replay, and abandonment (see [below](#payment-status-webhooks)). The receiver contract and a .NET example are in [docs/webhooks-receiver.md](docs/webhooks-receiver.md). NaLekci's own receiver is a separate integration and not verified yet
+- **Feature 11: webhook delivery retries** ([spec](docs/features/011-webhook-delivery-retries.md)): four attempts per delivery, the retries 5 seconds, 60 seconds, and 1 hour after each failure, restart-safe and visible after the last failure
 
 The target architecture is described in [docs/architektura.md](docs/architektura.md) (in Czech).
 
@@ -147,7 +145,9 @@ The recovery check runs once when the API starts and then every `InboundEmail:Di
 
 The API process runs a background worker for durable jobs in PostgreSQL. `BackgroundJobs` settings: `Enabled` (`true`), `PollInterval` (`00:00:05`), `LeaseDuration` (`00:05:00`), `MaxAttempts` (`6`), and `RetryDelays` (`00:01:00`, `00:05:00`, `00:30:00`, `02:00:00`, `06:00:00`).
 
-Cookie-protection (Data Protection) keys are stored in the `data_protection_keys` table, so sessions survive restarts and work across instances that share the database.
+Cookie-protection (Data Protection) keys are stored in the `data_protection_keys` table, so sessions survive restarts and work across instances that share the database. The same key ring encrypts webhook signing secrets, so losing it makes deliveries wait as `signing_key_unavailable` until the secret is rotated.
+
+Outgoing webhooks are configured in the `Webhooks` section: `PollInterval` (`00:00:01`), `LeaseDuration` (`00:01:00`), `MaxParallel` (`8`, with at most one request per endpoint in flight), `MaintenanceInterval` (`00:01:00`), and `AllowedLocalDestinations` (empty). The last one lists `host:port` entries, e.g. `localhost:5099`, that may use HTTP and a private address for a local test receiver; the API refuses to start with it outside Development and Testing. Payment matching uses `Matching:SweepInterval` (`00:10:00`) and `Matching:AllowTestEvidence` (`false`, Development and Testing only).
 
 ## API overview
 
@@ -316,6 +316,24 @@ A recorded transaction is matched in a background job (`match_transaction`), and
 
 The local SPA shows matching results, candidates, manual allocation with a preview, review cases with their evidence and decisions, and each request's allocations and changes.
 
+### Payment-status webhooks
+
+Each tenant can have one endpoint (`POST .../webhook-endpoint` with `url`, `environment` `live` or `test`, and `scope`). It starts `paused`, and the response shows its signing secret `pwhsec_…` once. Routes:
+
+- `/v1/tenant/...` manages the caller's own endpoint. A parent administrator's session may choose `scope: own_and_direct_children`; an ordinary tenant key may not (`403`).
+- `/v1/management/...` is the same for a management key, e.g. NaLekci's backend.
+- `/v1/subtenants/{id}/...` manages a child's own endpoint and never shows the parent's.
+
+How it works:
+
+- **Events.** Every Feature 009 payment change commits together with its immutable event (`payment_request.updated`, the change's ID and per-request sequence, `previous` and `current` totals, cause `allocation_created`, `allocation_revoked`, `transaction_review_required`, or `request_cancelled`) and one delivery for each subscriber at that moment: the owner's endpoint and the parent's when it includes children. Endpoints receive only their own environment. Edits, reads, QR codes, and creation retries create no events. Events for changes recorded before Feature 10 are materialized without deliveries; old history is sent only on request.
+- **Delivery.** HTTPS POST, 10-second timeout, no redirects, no cookies, connections only to addresses validated as public at connect time. Headers: `Pairrot-Webhook-Id` (the delivery), `Pairrot-Webhook-Timestamp`, and `Pairrot-Webhook-Signature: v1,<key-id>,<base64 HMAC-SHA256 of "<id>.<timestamp>.<body>">`. Every attempt sends the same bytes with a fresh timestamp and signature.
+- **Retries.** `2xx` is delivered. Network errors, timeouts, `408`, `425`, `429`, and `5xx` are retried 5 s, 60 s, and 1 h after each failure; `Retry-After` can only postpone. Four attempts per generation, then `failed`. Other `4xx` and redirects fail at once. An attempt is reserved before the request is sent; a worker that dies mid-send leaves an `outcome_unknown` attempt that counts and is retried. Nothing about a delivery changes a payment.
+- **Holds.** A paused endpoint accumulates work and releases it when resumed. Changing the URL creates a new destination revision, and queued work for the old one is held as `destination_changed` until an explicit replay. Lost authority, an inactive tenant, or an unavailable key hold delivery and are rechecked before every send.
+- **Management.** `PATCH .../webhook-endpoint` (`If-Match`) changes `url`, `scope`, or `state`. `POST .../rotate-secret` reveals a new key once; the old one keeps signing for `grace_period_seconds` (default 24 h; `0` revokes it at once). `POST .../test` sends a synthetic `webhook.test`, also while paused. `GET .../webhook-events` lists events for replay selection. `GET .../webhook-deliveries[/{id}]` shows state, attempts, and errors. `POST .../webhook-deliveries/{id}/retry` and `/abandon` take `expected_version` and `reason`. `POST .../webhook-endpoint/replay` takes up to 100 `event_ids`, `expected_destination_revision`, and `reason`. All POSTs need `Idempotency-Key`; a repeated secret-creating command returns metadata without the secret.
+
+Receivers verify the raw body, deduplicate by event ID, and apply only a higher `sequence`; see [docs/webhooks-receiver.md](docs/webhooks-receiver.md).
+
 ## Administrative CLI
 
 Root tenants, their keys, and user accounts are managed from the command line, never over HTTP. There is no public signup, invitation flow, or emailed password reset.
@@ -349,6 +367,7 @@ dotnet run --project src/Pairrot.Admin -- inbound resume <address>
 dotnet run --project src/Pairrot.Admin -- inbound volume [--days <n>]
 dotnet run --project src/Pairrot.Admin -- payments sweep
 dotnet run --project src/Pairrot.Admin -- payments check
+dotnet run --project src/Pairrot.Admin -- webhooks backfill <tenant> --from <time> --to <time> [--apply]
 ```
 
 All commands accept `--operator <name>`, which is recorded in the audit log. `setup` and the `keys` commands also accept `--root <external-id>` (default `nalekci.cz`). A `<tenant>` is a tenant ID, a root external ID (`nalekci.cz`), or `root/child` (`nalekci.cz/studio_123`).
@@ -356,6 +375,8 @@ All commands accept `--operator <name>`, which is recorded in the audit log. `se
 Passwords are prompted without echo, or read as one line from standard input when it is redirected. They are never printed or logged.
 
 The `inbound` commands are the only global view of received mail, quarantined messages included. `inbound sync` shows, per instance, the last attempt and success, the covered-through time, the next due time, the discovered-message count, the last error, and any coverage gap. `set-from` moves recovery to an earlier start, e.g. when importing an existing receiving account. Routing can be retried only against the address map, never to a chosen tenant. Retries are recorded on the retrieval job and, for routed messages, in the tenant's audit history. The CLI needs the same `InboundEmail` configuration as the API to know which instances can retrieve content.
+
+`webhooks backfill` previews the events of a tenant's webhook scope in a time range that its endpoint never received, with the destination and revision; `--apply` queues them.
 
 `payments check` verifies that each paid amount equals its active allocations and that no disputed, duplicate, rejected, or reviewed receipt is counted; it exits with 1 when it finds a problem.
 
@@ -385,6 +406,8 @@ Feature 7 adds `message_parse_runs` (unique per message and job generation), `in
 Feature 8 adds `forwarding_sources` (owner-consistent reference to the connection, unique per connection and address among non-removed sources). `inbound_addresses` gains a processing state (`active`, `paused_foreign_mail`) separate from `active`/`retired`, with pause and resume times. `inbound_messages` gains the sender class, sender domain, a retention deadline, and the content state `skipped`. A check constraint guarantees that foreign or paused messages keep no subject, sender, body, headers, or raw content. `incoming_transactions` gains `origin_path`.
 
 Feature 9 adds `payment_allocations` (composite owner/account references to both the transaction and the request, a partial unique index allowing one active allocation per transaction), `payment_request_changes` (unique per request and sequence), `payment_review_cases` with their members and immutable `payment_review_decisions`, and `manual_command_receipts` (unique per owner and `Idempotency-Key`). `payment_requests` gains `paid_amount` and `change_sequence`, and a check constraint ties the status to the paid amount. `incoming_transactions` gains the handling state, automatic-matching block, manual confirmation, canonical duplicate reference, the latest matching result, and a version. Existing requests keep their status with nothing paid; the matching sweep records cases for older unresolved results and queues existing transactions.
+
+Features 10 and 11 add `webhook_endpoints` (one per tenant), immutable `webhook_destination_revisions`, `webhook_signing_keys` (encrypted secrets, at most one current and one retiring key), `webhook_events` (immutable bytes and digest, unique per payment change), `webhook_deliveries` (unique per event and endpoint, with state, generation, attempt counters, due time, and lease), and `webhook_delivery_attempts` (unique per delivery, generation, and attempt number, so a generation cannot exceed four attempts). Nothing is deleted; a retired key loses only its secret.
 
 ## Tests
 

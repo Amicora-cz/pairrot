@@ -49,7 +49,7 @@ public class PaymentMatcher(PairrotDbContext db, PaymentLedger ledger)
         Record(transaction, result, request?.Id);
         if (result == MatchResults.Matched)
         {
-            if (ledger.Allocate(transaction, request!, AllocationMethod.Automatic, null, PaymentLedger.SystemActor).Error is { } error)
+            if ((await ledger.AllocateAsync(transaction, request!, AllocationMethod.Automatic, null, PaymentLedger.SystemActor, ct)).Error is { } error)
             {
                 Record(transaction, error.Code, request!.Id);
                 return error.Code;

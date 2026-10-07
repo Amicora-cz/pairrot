@@ -37,6 +37,7 @@ public static class TenantEndpoints
         group.MapTenantInboundMessages();
         group.MapTenantTransactions();
         group.MapTenantMatching();
+        group.MapTenantWebhooks();
 
         // Browser sessions only: an ordinary tenant key cannot issue more keys for itself.
         var browser = group.MapGroup("").RequireAuthorization(PairrotClaims.Policies.Session);

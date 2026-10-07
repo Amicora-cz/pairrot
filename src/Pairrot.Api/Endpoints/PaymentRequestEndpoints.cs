@@ -26,7 +26,7 @@ public static class PaymentRequestEndpoints
     private static readonly HashSet<string> ImmutableFields =
     [
         "id", "tenant_id", "bank_connection_id", "external_id", "account_number", "iban", "amount", "currency",
-        "variable_symbol", "message", "status", "is_overdue", "paid_amount", "remaining_amount", "overpaid_amount", "cancellation_reason",
+        "variable_symbol", "message", "status", "is_overdue", "paid_amount", "remaining_amount", "overpaid_amount", "payment_change_sequence", "cancellation_reason",
         "created_at", "updated_at", "cancelled_at", "version", "payment_instructions", "open_review_case_ids",
     ];
 

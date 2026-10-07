@@ -600,3 +600,90 @@ export interface ReceptionStatus {
   } | null
   forwarding_sources: ForwardingSource[]
 }
+
+/** Features 010 and 011: the tenant's outgoing payment-status webhook. Secrets appear only in a creation or rotation response. */
+export type WebhookScope = 'own' | 'own_and_direct_children'
+export type WebhookHealth = 'paused' | 'configured' | 'test_accepted' | 'delivering' | 'failing'
+export type WebhookDeliveryState = 'pending' | 'running' | 'retry_wait' | 'delivered' | 'failed' | 'held' | 'abandoned'
+
+export interface WebhookEndpoint {
+  id: string
+  tenant_id: string
+  url: string
+  scope: WebhookScope
+  state: 'active' | 'paused'
+  environment: 'live' | 'test'
+  destination_revision: number
+  signing_keys: { key_id: string; state: 'current' | 'retiring' | 'retired'; created_at: string; retires_at: string | null; retired_at: string | null }[]
+  deliveries: { pending: number; retry_wait: number; running: number; failed: number; held: number; delivered: number; abandoned: number }
+  /** Evidence, not configuration: a saved URL alone is only `configured`. */
+  health: { status: WebhookHealth; last_test_accepted_at: string | null; last_success_at: string | null; current_failures: number }
+  created_at: string
+  updated_at: string
+  version: number
+}
+
+/** Returned once by creation and rotation; a retried command returns the endpoint without it. */
+export interface SignedWebhookEndpoint {
+  endpoint: WebhookEndpoint
+  signing_secret?: { key_id: string; secret: string }
+}
+
+export interface WebhookEvent {
+  id: string
+  type: string
+  tenant_id: string
+  payment_request_id: string | null
+  sequence: number | null
+  environment: 'live' | 'test'
+  synthetic: boolean
+  created_at: string
+  body: unknown
+}
+
+export interface WebhookDelivery {
+  id: string
+  event_id: string
+  endpoint_id: string
+  owner_tenant_id: string
+  destination_revision: number
+  state: WebhookDeliveryState
+  hold_reason: string | null
+  generation: number
+  attempt_in_generation: number
+  max_attempts: number
+  total_attempts: number
+  next_attempt_at: string | null
+  last_outcome: string | null
+  last_error_code: string | null
+  last_error_message: string | null
+  last_http_status: number | null
+  abandon_reason: string | null
+  delivered_at: string | null
+  created_at: string
+  updated_at: string
+  version: number
+}
+
+export interface WebhookAttempt {
+  id: string
+  generation: number
+  attempt_number: number
+  destination_revision: number
+  url: string
+  key_ids: string
+  outcome: 'in_progress' | 'delivered' | 'retryable_failure' | 'permanent_failure' | 'outcome_unknown'
+  http_status: number | null
+  error_code: string | null
+  response_excerpt: string | null
+  started_at: string
+  completed_at: string | null
+  duration_ms: number | null
+}
+
+export interface WebhookDeliveryDetail {
+  delivery: WebhookDelivery
+  event: WebhookEvent
+  attempts: WebhookAttempt[]
+  current_url: string
+}

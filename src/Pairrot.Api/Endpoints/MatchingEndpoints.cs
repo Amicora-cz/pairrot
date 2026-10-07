@@ -336,8 +336,13 @@ public static class MatchingEndpoints
     }
 
     /// <summary>Reads the required <c>Idempotency-Key</c> and fingerprints the command's input.</summary>
-    private static bool TryCommand(
-        HttpContext http, ClaimsPrincipal user, string action, out CommandRequest? command, out IResult? error, params object?[] input)
+    internal static bool TryCommand(
+        HttpContext http, ClaimsPrincipal user, string action, out CommandRequest? command, out IResult? error, params object?[] input) =>
+        TryCommand(http, user.GetActor(), action, out command, out error, input);
+
+    /// <summary>Reads the required <c>Idempotency-Key</c> and fingerprints the command's input.</summary>
+    internal static bool TryCommand(
+        HttpContext http, Actor actor, string action, out CommandRequest? command, out IResult? error, params object?[] input)
     {
         command = null;
         error = null;
@@ -356,11 +361,11 @@ public static class MatchingEndpoints
             return false;
         }
 
-        command = new CommandRequest(key, action, ManualCommands.Fingerprint(action, input), user.GetActor());
+        command = new CommandRequest(key, action, ManualCommands.Fingerprint(action, input), actor);
         return true;
     }
 
-    private static IResult ToResult(HttpContext http, ServiceResult<CommandOutcome> result)
+    internal static IResult ToResult(HttpContext http, ServiceResult<CommandOutcome> result)
     {
         if (result.Error is { } failure)
         {

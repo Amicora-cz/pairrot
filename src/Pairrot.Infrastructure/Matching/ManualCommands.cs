@@ -14,7 +14,14 @@ namespace Pairrot.Infrastructure.Matching;
 public sealed record CommandRequest(string IdempotencyKey, string Action, string Fingerprint, Actor Actor);
 
 /// <summary>The response of a command, committed together with its receipt.</summary>
-public sealed record CommandResult(int Status, object Response, object ResourceIds);
+public sealed record CommandResult(int Status, object Response, object ResourceIds)
+{
+    /// <summary>
+    /// What the first execution returns instead of <see cref="Response"/>, e.g. with a one-time
+    /// secret. Only <see cref="Response"/> is stored, so a retry never discloses it again.
+    /// </summary>
+    public object? FirstResponse { get; init; }
+}
 
 /// <param name="Replayed">An earlier execution with the same key and input was returned; nothing changed now.</param>
 public sealed record CommandOutcome(int Status, string Body, bool Replayed);
@@ -42,11 +49,12 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
 
     /// <summary>
     /// Executes <paramref name="body"/> for <paramref name="ownerId"/> under the lock of
-    /// <paramref name="connectionId"/>, or returns the stored outcome of the same command.
+    /// <paramref name="lockId"/> (a bank connection, or the subscriber for webhook commands), or
+    /// returns the stored outcome of the same command.
     /// <paramref name="body"/> changes tracked entities; it must not commit.
     /// </summary>
     public async Task<ServiceResult<CommandOutcome>> RunAsync(
-        Guid ownerId, Guid connectionId, CommandRequest command, Func<Task<ServiceResult<CommandResult>>> body, CancellationToken ct)
+        Guid ownerId, Guid lockId, CommandRequest command, Func<Task<ServiceResult<CommandResult>>> body, CancellationToken ct)
     {
         if (await StoredAsync(ownerId, command, ct) is { } stored)
         {
@@ -55,7 +63,7 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
 
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        await ledger.LockConnectionAsync(connectionId, ct);
+        await ledger.LockConnectionAsync(lockId, ct);
         try
         {
             var result = await body();
@@ -82,7 +90,8 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
             });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            return new CommandOutcome(result.Value.Status, json, false);
+            var first = result.Value.FirstResponse is { } reveal ? JsonSerializer.Serialize(reveal, Json) : json;
+            return new CommandOutcome(result.Value.Status, first, false);
         }
         catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException
             || TenantService.IsUniqueViolation(ex, PaymentChangeConfiguration.SequenceUniqueIndex))

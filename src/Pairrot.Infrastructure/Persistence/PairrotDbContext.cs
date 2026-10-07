@@ -9,6 +9,7 @@ using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
 using Pairrot.Core.Users;
+using Pairrot.Core.Webhooks;
 using Pairrot.Infrastructure.Users;
 
 namespace Pairrot.Infrastructure.Persistence;
@@ -39,6 +40,12 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<PaymentReviewCaseMember> ReviewCaseMembers => Set<PaymentReviewCaseMember>();
     public DbSet<PaymentReviewDecision> ReviewDecisions => Set<PaymentReviewDecision>();
     public DbSet<ManualCommandReceipt> CommandReceipts => Set<ManualCommandReceipt>();
+    public DbSet<WebhookEndpoint> WebhookEndpoints => Set<WebhookEndpoint>();
+    public DbSet<WebhookDestinationRevision> WebhookDestinationRevisions => Set<WebhookDestinationRevision>();
+    public DbSet<WebhookSigningKey> WebhookSigningKeys => Set<WebhookSigningKey>();
+    public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+    public DbSet<WebhookDeliveryAttempt> WebhookDeliveryAttempts => Set<WebhookDeliveryAttempt>();
 
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();

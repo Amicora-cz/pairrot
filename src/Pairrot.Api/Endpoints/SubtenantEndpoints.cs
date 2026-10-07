@@ -36,6 +36,7 @@ public static class SubtenantEndpoints
         group.MapSubtenantInboundMessages();
         group.MapSubtenantTransactions();
         group.MapSubtenantMatching();
+        group.MapSubtenantWebhooks();
     }
 
     private static async Task<IResult> CreateAsync(

@@ -21,11 +21,6 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower));
 });
 
-// Cookie-protection keys live in PostgreSQL, so sessions survive application restarts.
-builder.Services.AddDataProtection()
-    .SetApplicationName("Pairrot")
-    .PersistKeysToDbContext<PairrotDbContext>();
-
 builder.Services.AddPairrotAuthentication();
 builder.Services.AddAuthorization(PairrotClaims.Policies.Configure);
 
@@ -70,6 +65,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapAuthEndpoints();
 app.MapTenantEndpoints();
 app.MapSubtenantEndpoints();
+app.MapManagementEndpoints();
 app.MapWebhookEndpoints();
 
 app.Run();

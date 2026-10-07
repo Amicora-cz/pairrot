@@ -48,4 +48,10 @@ public static class AuditActions
     public const string TransactionMatchRequested = "transaction.match_requested";
     public const string ReviewCaseResolved = "review_case.resolved";
     public const string ReviewCaseReopened = "review_case.reopened";
+    public const string WebhookEndpointCreated = "webhook_endpoint.created";
+    public const string WebhookEndpointUpdated = "webhook_endpoint.updated";
+    public const string WebhookSecretRotated = "webhook_endpoint.secret_rotated";
+    public const string WebhookDeliveryRetried = "webhook_delivery.retried";
+    public const string WebhookDeliveryAbandoned = "webhook_delivery.abandoned";
+    public const string WebhookEventsReplayed = "webhook_events.replayed";
 }

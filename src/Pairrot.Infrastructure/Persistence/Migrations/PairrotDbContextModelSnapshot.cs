@@ -2486,6 +2486,488 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AbandonReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("abandon_reason");
+
+                    b.Property<int>("AttemptInGeneration")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_in_generation");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("delivered_at");
+
+                    b.Property<int>("DestinationRevision")
+                        .HasColumnType("integer")
+                        .HasColumnName("destination_revision");
+
+                    b.Property<DateTimeOffset?>("DueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at");
+
+                    b.Property<Guid>("EndpointId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("endpoint_id");
+
+                    b.Property<Guid>("EventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("event_id");
+
+                    b.Property<int>("Generation")
+                        .HasColumnType("integer")
+                        .HasColumnName("generation");
+
+                    b.Property<string>("HoldReason")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("hold_reason");
+
+                    b.Property<string>("LastErrorCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("last_error_code");
+
+                    b.Property<string>("LastErrorMessage")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("last_error_message");
+
+                    b.Property<int?>("LastHttpStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_http_status");
+
+                    b.Property<string>("LastOutcome")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("last_outcome");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("lease_owner");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_token");
+
+                    b.Property<Guid>("OwnerTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_tenant_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("SubscriberTenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subscriber_tenant_id");
+
+                    b.Property<int>("TotalAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("total_attempts");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_deliveries");
+
+                    b.HasIndex("EndpointId", "CreatedAt")
+                        .HasDatabaseName("webhook_deliveries_endpoint_idx");
+
+                    b.HasIndex("EventId", "EndpointId")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_deliveries_event_endpoint_unique");
+
+                    b.HasIndex("State", "DueAt")
+                        .HasDatabaseName("webhook_deliveries_due_idx")
+                        .HasFilter("state IN ('pending', 'retry_wait', 'running')");
+
+                    b.ToTable("webhook_deliveries", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_deliveries_counters_valid", "generation >= 1 AND attempt_in_generation BETWEEN 0 AND 4 AND total_attempts >= attempt_in_generation AND version >= 1");
+
+                            t.HasCheckConstraint("webhook_deliveries_hold_consistent", "(state = 'held') = (hold_reason IS NOT NULL)");
+
+                            t.HasCheckConstraint("webhook_deliveries_lease_consistent", "(state = 'running' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL) OR (state <> 'running' AND lease_token IS NULL AND lease_expires_at IS NULL)");
+
+                            t.HasCheckConstraint("webhook_deliveries_state_valid", "state IN ('pending', 'running', 'retry_wait', 'delivered', 'failed', 'held', 'abandoned')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDeliveryAttempt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempt_number");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<Guid>("DeliveryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("delivery_id");
+
+                    b.Property<int>("DestinationRevision")
+                        .HasColumnType("integer")
+                        .HasColumnName("destination_revision");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("error_code");
+
+                    b.Property<int>("Generation")
+                        .HasColumnType("integer")
+                        .HasColumnName("generation");
+
+                    b.Property<int?>("HttpStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("http_status");
+
+                    b.Property<string>("KeyIds")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("key_ids");
+
+                    b.Property<Guid>("LeaseToken")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_token");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ResponseExcerpt")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("response_excerpt");
+
+                    b.Property<long>("SignedTimestamp")
+                        .HasColumnType("bigint")
+                        .HasColumnName("signed_timestamp");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_delivery_attempts");
+
+                    b.HasIndex("DeliveryId", "Generation", "AttemptNumber")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_delivery_attempts_unique");
+
+                    b.ToTable("webhook_delivery_attempts", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_delivery_attempts_number_valid", "attempt_number BETWEEN 1 AND 4");
+
+                            t.HasCheckConstraint("webhook_delivery_attempts_outcome_valid", "outcome IN ('in_progress', 'delivered', 'retryable_failure', 'permanent_failure', 'outcome_unknown')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDestinationRevision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<Guid>("EndpointId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("endpoint_id");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_destination_revisions");
+
+                    b.HasIndex("EndpointId", "Revision")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_destination_revisions_unique");
+
+                    b.ToTable("webhook_destination_revisions", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_destination_revisions_revision_valid", "revision >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookEndpoint", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("DestinationRevision")
+                        .HasColumnType("integer")
+                        .HasColumnName("destination_revision");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("environment");
+
+                    b.Property<DateTimeOffset?>("LastSuccessAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_success_at");
+
+                    b.Property<DateTimeOffset?>("LastTestAcceptedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_test_accepted_at");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("url");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_endpoints");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_endpoints_tenant_unique");
+
+                    b.ToTable("webhook_endpoints", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_endpoints_counters_valid", "destination_revision >= 1 AND version >= 1");
+
+                            t.HasCheckConstraint("webhook_endpoints_environment_valid", "environment IN ('test', 'live')");
+
+                            t.HasCheckConstraint("webhook_endpoints_scope_valid", "scope IN ('own', 'own_and_direct_children')");
+
+                            t.HasCheckConstraint("webhook_endpoints_state_valid", "state IN ('paused', 'active')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("body");
+
+                    b.Property<string>("BodySha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("body_sha256");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("environment");
+
+                    b.Property<Guid?>("PaymentChangeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_change_id");
+
+                    b.Property<Guid?>("PaymentRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_request_id");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("schema_version");
+
+                    b.Property<int?>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
+                    b.Property<bool>("Synthetic")
+                        .HasColumnType("boolean")
+                        .HasColumnName("synthetic");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("type");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_events");
+
+                    b.HasIndex("PaymentChangeId")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_events_change_unique")
+                        .HasFilter("payment_change_id IS NOT NULL");
+
+                    b.HasIndex("PaymentRequestId", "Sequence")
+                        .HasDatabaseName("webhook_events_request_idx");
+
+                    b.HasIndex("TenantId", "CreatedAt")
+                        .HasDatabaseName("webhook_events_tenant_time_idx");
+
+                    b.ToTable("webhook_events", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_events_digest_format", "body_sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("webhook_events_environment_valid", "environment IN ('test', 'live')");
+
+                            t.HasCheckConstraint("webhook_events_kind_consistent", "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND sequence IS NULL AND environment = 'test') OR (NOT synthetic AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND sequence IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookSigningKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("EndpointId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("endpoint_id");
+
+                    b.Property<string>("KeyId")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("key_id");
+
+                    b.Property<string>("ProtectedSecret")
+                        .HasColumnType("text")
+                        .HasColumnName("protected_secret");
+
+                    b.Property<DateTimeOffset?>("RetiredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retired_at");
+
+                    b.Property<DateTimeOffset?>("RetiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retires_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.HasKey("Id")
+                        .HasName("pk_webhook_signing_keys");
+
+                    b.HasIndex("EndpointId")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_signing_keys_one_retiring")
+                        .HasFilter("state = 'retiring'");
+
+                    b.HasIndex("KeyId")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_signing_keys_key_id_unique");
+
+                    b.ToTable("webhook_signing_keys", null, t =>
+                        {
+                            t.HasCheckConstraint("webhook_signing_keys_secret_consistent", "(state = 'retired' AND protected_secret IS NULL AND retired_at IS NOT NULL) OR (state = 'current' AND protected_secret IS NOT NULL AND retires_at IS NULL) OR (state = 'retiring' AND protected_secret IS NOT NULL AND retires_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("webhook_signing_keys_state_valid", "state IN ('current', 'retiring', 'retired')");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Infrastructure.Users.PairrotUser", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2942,6 +3424,72 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_user_sessions_users_user_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDelivery", b =>
+                {
+                    b.HasOne("Pairrot.Core.Webhooks.WebhookEndpoint", null)
+                        .WithMany()
+                        .HasForeignKey("EndpointId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_deliveries_webhook_endpoints_endpoint_id");
+
+                    b.HasOne("Pairrot.Core.Webhooks.WebhookEvent", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_deliveries_webhook_events_event_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDeliveryAttempt", b =>
+                {
+                    b.HasOne("Pairrot.Core.Webhooks.WebhookDelivery", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_delivery_attempts_webhook_deliveries_delivery_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookDestinationRevision", b =>
+                {
+                    b.HasOne("Pairrot.Core.Webhooks.WebhookEndpoint", null)
+                        .WithMany()
+                        .HasForeignKey("EndpointId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_destination_revisions_webhook_endpoints_endpoint_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookEndpoint", b =>
+                {
+                    b.HasOne("Pairrot.Core.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_endpoints_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookEvent", b =>
+                {
+                    b.HasOne("Pairrot.Core.Matching.PaymentChange", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentChangeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_webhook_events_payment_request_changes_payment_change_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Webhooks.WebhookSigningKey", b =>
+                {
+                    b.HasOne("Pairrot.Core.Webhooks.WebhookEndpoint", null)
+                        .WithMany()
+                        .HasForeignKey("EndpointId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_webhook_signing_keys_webhook_endpoints_endpoint_id");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>

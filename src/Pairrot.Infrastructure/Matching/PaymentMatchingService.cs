@@ -213,7 +213,7 @@ public class PaymentMatchingService(
                 return ServiceError.Conflict("payment_request_cancelled", "A cancelled payment request cannot receive an allocation.");
             }
 
-            var allocated = ledger.Allocate(transaction, request, AllocationMethod.Manual, input.Reason!.Trim(), command.Actor);
+            var allocated = await ledger.AllocateAsync(transaction, request, AllocationMethod.Manual, input.Reason!.Trim(), command.Actor, ct);
             if (allocated.Error is { } error)
             {
                 return error;
@@ -273,8 +273,8 @@ public class PaymentMatchingService(
                 return ServiceError.Conflict("allocation_revoked", "The allocation is already revoked.");
             }
 
-            ledger.Revoke(allocation, transaction, request, RevocationCodes.Manual, input.Reason!.Trim(), command.Actor,
-                PaymentChangeCause.AllocationRevoked);
+            await ledger.RevokeAsync(allocation, transaction, request, RevocationCodes.Manual, input.Reason!.Trim(), command.Actor,
+                PaymentChangeCause.AllocationRevoked, ct);
             await db.SaveChangesAsync(ct);
             var outcome = new AllocationOutcome(allocation, await ViewAsync(transaction, ct), request);
             return new CommandResult(200, render(outcome),

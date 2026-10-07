@@ -11,6 +11,7 @@ using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Users;
+using Pairrot.Infrastructure.Webhooks;
 
 // Administrative CLI. Root tenant setup, root keys, and user accounts are deliberately not HTTP endpoints.
 
@@ -73,6 +74,12 @@ const string Usage = """
       payments check                           Verify that every paid amount equals its active
                                                allocations and that no disputed, duplicate,
                                                rejected, or reviewed receipt is counted.
+
+      webhooks backfill <tenant> --from <time> --to <time> [--apply]
+                                               Payment events in [from, to) within the tenant's
+                                               webhook scope that its endpoint never received.
+                                               Shows the count and destination; --apply queues
+                                               them to the endpoint's current destination.
 
     Common options:
       --root <external-id>   Root tenant for setup and keys (default: nalekci.cz)
@@ -410,6 +417,40 @@ switch (args)
 
         Console.WriteLine(problems.Count == 0 ? "Payment totals and allocations are consistent." : $"{problems.Count} problem(s) found.");
         return problems.Count == 0 ? 0 : 1;
+    }
+
+    case ["webhooks", "backfill", var tenantReference, ..]:
+    {
+        if (await userAdmin.FindTenantAsync(tenantReference) is not { } subscriber)
+        {
+            Console.Error.WriteLine($"Tenant '{tenantReference}' was not found.");
+            return 1;
+        }
+
+        if (!Pairrot.Core.Payments.PaymentRequestRules.TryParseDueAt(options.GetValueOrDefault("from") ?? "", out var from)
+            || !Pairrot.Core.Payments.PaymentRequestRules.TryParseDueAt(options.GetValueOrDefault("to") ?? "", out var to) || to <= from)
+        {
+            Console.Error.WriteLine("--from and --to are required ISO 8601 times with an offset, --from before --to.");
+            return 1;
+        }
+
+        var webhooks = services.GetRequiredService<WebhookService>();
+        var (endpoint, eventIds) = await webhooks.BackfillCandidatesAsync(subscriber.Id, from, to);
+        if (endpoint is null)
+        {
+            Console.Error.WriteLine("The tenant has no webhook endpoint.");
+            return 1;
+        }
+
+        Console.WriteLine($"{eventIds.Count} event(s) for {endpoint.Url} (revision {endpoint.DestinationRevision}, {Snake(endpoint.State)}).");
+        if (!args.Contains("--apply"))
+        {
+            Console.WriteLine("Nothing queued; add --apply to send them.");
+            return 0;
+        }
+
+        Console.WriteLine($"Queued {await webhooks.BackfillAsync(endpoint.Id, eventIds, Actor.Administrator(operatorName))} delivery(ies).");
+        return 0;
     }
 
     case ["inbound", "sync", "run", var instanceId, ..]:

@@ -347,6 +347,8 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
                 "The payment request has received payments; revoke their allocations before cancelling it.");
         }
 
+        // The payment change and its webhook deliveries commit with the cancellation.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var now = Now();
         var before = PaymentSummary.Of(request);
         request.Status = PaymentRequestStatus.Cancelled;
@@ -354,7 +356,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         request.CancelledAt = now;
         request.UpdatedAt = now;
         request.Version++;
-        ledger.AddChange(request, before, PaymentChangeCause.Cancelled, null, null, null, actor);
+        await ledger.AddChangeAsync(request, before, PaymentChangeCause.Cancelled, null, null, null, actor, ct);
         tenants.AddAudit(actor, owner.Id, AuditActions.PaymentRequestCancelled, new
         {
             PaymentRequestId = request.Id,
@@ -365,6 +367,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         try
         {
             await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
             return request;
         }
         catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException
@@ -372,6 +375,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         {
             // Another change won (its payment change took the same sequence number). If it was a
             // cancellation too, this one has nothing left to do.
+            await transaction.RollbackAsync(ct);
             db.ChangeTracker.Clear();
             var current = await db.PaymentRequests.AsNoTracking().SingleAsync(p => p.Id == requestId, ct);
             return current.Status == PaymentRequestStatus.Cancelled ? current : Stale();

@@ -9,6 +9,7 @@ import { History } from './History'
 import { InboundMessages } from './InboundMessages'
 import { Review } from './Review'
 import { Transactions } from './Transactions'
+import { Webhooks } from './Webhooks'
 
 /** Direct children of the selected root tenant. Managing a child does not make you its member. */
 export function Subtenants() {
@@ -208,6 +209,7 @@ function ChildDetail({ child, onChanged, onDeleted }: { child: Tenant; onChanged
       <InboundMessages key={`inbound-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
       <Transactions key={`transactions-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
       <Review key={`review-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
+      <Webhooks key={`webhooks-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} canManageChildren={false} />
       <History path={`/v1/subtenants/${child.id}/audit-events`} title="Subtenant history" />
     </>
   )

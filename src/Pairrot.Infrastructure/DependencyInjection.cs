@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -14,6 +15,7 @@ using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Users;
+using Pairrot.Infrastructure.Webhooks;
 
 namespace Pairrot.Infrastructure;
 
@@ -29,6 +31,11 @@ public static class DependencyInjection
 
         services.AddDbContext<PairrotDbContext>(options => ConfigureDbContext(options, connectionString));
         services.AddSingleton(TimeProvider.System);
+
+        // Cookie-protection keys and webhook signing secrets use one key ring in PostgreSQL, so both survive restarts.
+        services.AddDataProtection()
+            .SetApplicationName("Pairrot")
+            .PersistKeysToDbContext<PairrotDbContext>();
         services.AddScoped<TenantService>();
         services.AddScoped<RootTenantAdministration>();
 
@@ -118,6 +125,21 @@ public static class DependencyInjection
         services.AddScoped<ManualCommands>();
         services.AddScoped<PaymentMatchingService>();
         services.AddScoped<ReviewCaseService>();
+
+        // Features 010 and 011: outgoing payment-status webhooks with a fixed retry schedule.
+        services.AddOptions<WebhookOptions>()
+            .Bind(configuration.GetSection(WebhookOptions.Section))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<WebhookOptions>, WebhookOptionsValidator>();
+        services.AddHttpClient(WebhookOptions.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(sp => HttpWebhookTransport.CreateHandler(sp.GetRequiredService<IOptions<WebhookOptions>>().Value.AllowedLocal))
+            .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddSingleton<IWebhookTransport, HttpWebhookTransport>();
+        services.AddSingleton<WebhookKeyRing>();
+        services.AddScoped<WebhookRouter>();
+        services.AddScoped<WebhookDeliveryWorker>();
+        services.AddScoped<WebhookMaintenance>();
+        services.AddScoped<WebhookService>();
         return services;
     }
 
@@ -132,6 +154,7 @@ public static class DependencyInjection
             services.AddHostedService<MessageParseScheduler>();
             services.AddHostedService<InboundRetentionScheduler>();
             services.AddHostedService<MatchingScheduler>();
+            services.AddHostedService<WebhookDispatcher>();
         }
 
         return services;

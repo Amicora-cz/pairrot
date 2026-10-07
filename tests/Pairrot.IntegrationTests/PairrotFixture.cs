@@ -40,6 +40,11 @@ public sealed class PairrotFixture : IAsyncLifetime
     /// <summary>The inbound host with the synthetic bank profile (Feature 007), created on first use.</summary>
     public ParsingHarness Parsing => _parsing ??= new ParsingHarness(this);
 
+    private WebhookHarness? _webhooks;
+
+    /// <summary>The parsing host with a fake webhook receiver (Features 010 and 011), created on first use.</summary>
+    public WebhookHarness Webhooks => _webhooks ??= new WebhookHarness(this);
+
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
@@ -59,6 +64,11 @@ public sealed class PairrotFixture : IAsyncLifetime
         if (_inbound is not null)
         {
             await _inbound.Factory.DisposeAsync();
+        }
+
+        if (_webhooks is not null)
+        {
+            await _webhooks.Factory.DisposeAsync();
         }
 
         if (_parsing is not null)
