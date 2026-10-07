@@ -379,4 +379,27 @@ public class WebhookTests(PairrotFixture fx)
         Assert.Equal(("request_cancelled", "cancelled"), (data.Str("cause"), data["current"]!.Str("status")));
         Assert.Null(data["current"]!["remaining_amount"]);
     }
+
+    [Fact] // Feature 012 AC 11
+    public async Task A_generated_symbol_is_matched_exactly_and_reported_with_the_original_reference()
+    {
+        var child = await fx.CreateChildAsync();
+        var subscriber = await SubscribeAsync(child.Key);
+        var account = await P.CreateAccountAsync(child.Id, child.Key);
+        var externalId = $"booking-{Guid.NewGuid():N}";
+        var request = await W.Client(child.Key).PostAsJsonAsync("/v1/tenant/payment-requests", new
+        {
+            bank_connection_id = account.ConnectionId, external_id = externalId, amount = 45000, currency = "CZK",
+        }).ExpectAsync(HttpStatusCode.Created);
+        var vs = request.Str("variable_symbol");
+        Assert.Equal("1", vs);
+
+        await P.DeliverAsync(account, ParsingHarness.Incoming(account.Bank, vs: vs));
+        await W.RunDeliveriesAsync();
+
+        var sent = Assert.Single(W.Receiver.To(subscriber.Url));
+        Assert.True(Verifies(subscriber, sent));
+        var data = Body(sent)["data"]!;
+        Assert.Equal((externalId, request.Str("id"), "paid"), (data.Str("external_id"), data.Str("payment_request_id"), data["current"]!.Str("status")));
+    }
 }

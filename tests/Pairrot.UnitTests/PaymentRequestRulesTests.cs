@@ -67,12 +67,48 @@ public class PaymentRequestRulesTests
             Draft(Input() with { ExternalId = " booking_123 ", Message = " Yoga " }).Fingerprint);
 
     [Theory]
-    [InlineData(null, "variable_symbol", PaymentErrors.InvalidVariableSymbol)]
-    [InlineData("", "variable_symbol", PaymentErrors.InvalidVariableSymbol)]
-    [InlineData("12345678901", "variable_symbol", PaymentErrors.InvalidVariableSymbol)]
-    [InlineData("12a", "variable_symbol", PaymentErrors.InvalidVariableSymbol)]
-    public void A_variable_symbol_is_required(string? symbol, string field, string code) =>
-        AssertError(Input() with { VariableSymbol = symbol }, field, code);
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("12345678901")]
+    [InlineData("12a")]
+    [InlineData(" 123")]
+    public void A_supplied_variable_symbol_must_be_1_to_10_digits_and_never_falls_back_to_automatic(string symbol) =>
+        AssertError(Input() with { VariableSymbol = symbol }, "variable_symbol", PaymentErrors.InvalidVariableSymbol);
+
+    [Fact]
+    public void A_supplied_symbol_keeps_its_leading_zeros_and_the_v1_fingerprint()
+    {
+        var draft = Draft(Input() with { VariableSymbol = "000123", Message = "Yoga" });
+
+        Assert.Equal(VariableSymbolSource.Supplied, draft.VariableSymbolSource);
+        Assert.Equal("000123", draft.Payment.VariableSymbol);
+        Assert.Equal("123", draft.VariableSymbolKey);
+
+        // Saved fingerprints are compared on retries and never recomputed: the v1 calculation is fixed.
+        var canonical = $"[\"v1\",\"{Connection:D}\",\"booking_123\",45000,\"CZK\",\"000123\",\"Yoga\",null,null]";
+        var expected = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+        Assert.Equal(expected, draft.Fingerprint);
+    }
+
+    [Fact]
+    public void An_omitted_symbol_asks_for_automatic_assignment_with_its_own_fingerprint()
+    {
+        var automatic = Draft(Input() with { VariableSymbol = null });
+
+        Assert.Equal(VariableSymbolSource.Automatic, automatic.VariableSymbolSource);
+        Assert.Null(automatic.Payment.VariableSymbol);
+        Assert.Null(automatic.VariableSymbolKey);
+        Assert.Matches("^[0-9a-f]{64}$", automatic.Fingerprint);
+
+        // Supplying any symbol, including one an automatic creation could get, is a different original input.
+        Assert.NotEqual(automatic.Fingerprint, Draft(Input()).Fingerprint);
+        Assert.NotEqual(automatic.Fingerprint, Draft(Input() with { VariableSymbol = "1" }).Fingerprint);
+
+        // The other original fields still count.
+        Assert.NotEqual(automatic.Fingerprint, Draft(Input() with { VariableSymbol = null, Amount = 45001 }).Fingerprint);
+        Assert.NotEqual(automatic.Fingerprint, Draft(Input() with { VariableSymbol = null, BankConnectionId = Guid.NewGuid() }).Fingerprint);
+        Assert.Equal(automatic.Fingerprint, Draft(Input() with { VariableSymbol = null, Message = "  " }).Fingerprint);
+    }
 
     [Fact]
     public void Required_and_limited_fields_are_validated()

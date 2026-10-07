@@ -166,6 +166,19 @@ Content-Type: application/json
   "due_at": "2026-10-15T18:00:00+02:00"
 }
 
+### Feature 12: without variable_symbol, Pairrot assigns the next unused one of the connection. Retry without it too.
+POST {{host}}/v1/tenant/payment-requests
+Authorization: Bearer {{tenantKey}}
+Content-Type: application/json
+
+{
+  "bank_connection_id": "{{connectionId}}",
+  "external_id": "booking_124",
+  "amount": 45000,
+  "currency": "CZK",
+  "message": "Yoga October"
+}
+
 ###
 GET {{host}}/v1/tenant/payment-requests?external_id=booking_123
 Authorization: Bearer {{tenantKey}}

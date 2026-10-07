@@ -322,7 +322,7 @@ public class PaymentRequestTests(PairrotFixture fx)
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", amount: 0)), "amount", "invalid_amount");
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", amount: 1_000_000_000)), "amount", "invalid_amount");
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", currency: "EUR")), "currency", "unsupported_currency");
-        await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", symbol: null)), "variable_symbol", "invalid_variable_symbol");
+        await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", symbol: "")), "variable_symbol", "invalid_variable_symbol");
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", symbol: "12345678901")), "variable_symbol", "invalid_variable_symbol");
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", message: "100% done")), "message", "invalid_message");
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, Body(connectionId, "x", message: new string('ž', 61))), "message", "message_too_long");

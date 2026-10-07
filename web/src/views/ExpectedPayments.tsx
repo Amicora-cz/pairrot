@@ -220,7 +220,16 @@ function CreateRequest({
   connections: BankConnection[]
   onCreated: (request: PaymentRequest) => void
 }) {
-  const empty = { bank_connection_id: '', external_id: '', amount: '', variable_symbol: '', message: '', description: '', due_at: '' }
+  const empty = {
+    bank_connection_id: '',
+    external_id: '',
+    amount: '',
+    custom_symbol: false,
+    variable_symbol: '',
+    message: '',
+    description: '',
+    due_at: '',
+  }
   const [form, setForm] = useState(empty)
   const [notice, setNotice] = useState<string | null>(null)
   const { busy, error, run, setError } = useAction()
@@ -254,7 +263,8 @@ function CreateRequest({
           external_id: form.external_id.trim(),
           amount,
           currency: 'CZK',
-          variable_symbol: form.variable_symbol.trim(),
+          // Null asks Pairrot to assign the symbol. A retry after an error resends the same mode.
+          variable_symbol: form.custom_symbol ? form.variable_symbol.trim() : null,
           message: form.message.trim() || null,
           description: form.description.trim() || null,
           due_at: fromLocalInput(form.due_at),
@@ -265,7 +275,7 @@ function CreateRequest({
           setNotice(
             created.replayed
               ? `A request with external_id ${created.external_id} already existed with the same details; it is shown unchanged.`
-              : `Created ${created.external_id}.`,
+              : `Created ${created.external_id} with variable symbol ${created.variable_symbol}.`,
           )
           onCreated(created)
         })
@@ -294,18 +304,28 @@ function CreateRequest({
         {fieldError('amount')}
       </label>
       <label>
-        Variable symbol
-        <input
-          inputMode="numeric"
-          maxLength={10}
-          placeholder="2026000123"
-          value={form.variable_symbol}
-          onChange={(e) => edit({ variable_symbol: e.target.value })}
-          required
-        />
-        <span className="muted">Up to 10 digits. Leading zeros are ignored when checking for duplicates on the same account.</span>
-        {fieldError('variable_symbol')}
+        <input type="checkbox" checked={form.custom_symbol} onChange={(e) => edit({ custom_symbol: e.target.checked })} /> Enter my own
+        variable symbol
+        <span className="muted">Otherwise Pairrot assigns the next unused symbol for this bank account.</span>
       </label>
+      {form.custom_symbol ? (
+        <label>
+          Variable symbol
+          <input
+            inputMode="numeric"
+            maxLength={10}
+            pattern="[0-9]{1,10}"
+            placeholder="2026000123"
+            value={form.variable_symbol}
+            onChange={(e) => edit({ variable_symbol: e.target.value })}
+            required
+          />
+          <span className="muted">Up to 10 digits. Leading zeros are ignored when checking for duplicates on the same account.</span>
+          {fieldError('variable_symbol')}
+        </label>
+      ) : (
+        fieldError('variable_symbol')
+      )}
       <label>
         Message for the recipient (optional)
         <input placeholder="Yoga October" value={form.message} onChange={(e) => edit({ message: e.target.value })} />

@@ -31,6 +31,12 @@ public class PaymentRequest
     /// <summary>The symbol without leading zeros; unique per bank connection. See <see cref="PaymentRequestRules.VariableSymbolKey"/>.</summary>
     public required string VariableSymbolKey { get; set; }
 
+    /// <summary>
+    /// Whether the caller supplied the symbol or Pairrot assigned it (Feature 012). Part of the
+    /// original creation input: a retry must use the same mode.
+    /// </summary>
+    public VariableSymbolSource VariableSymbolSource { get; set; }
+
     public string? Message { get; set; }
     public string? Description { get; set; }
     public DateTimeOffset? DueAt { get; set; }
@@ -60,6 +66,13 @@ public class PaymentRequest
 
     /// <summary>Starts at 1 and is incremented on every change; exposed as the ETag.</summary>
     public int Version { get; set; } = 1;
+}
+
+/// <summary>How a request's variable symbol was chosen; requests created before Feature 012 are <see cref="Supplied"/>.</summary>
+public enum VariableSymbolSource
+{
+    Supplied,
+    Automatic,
 }
 
 /// <summary>

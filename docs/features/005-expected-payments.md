@@ -1,5 +1,7 @@
 # Feature 005: expected payments
 
+Extended by [Feature 012](./012-automatic-variable-symbol-generation.md) (implemented): `variable_symbol` is optional on creation and assigned automatically when omitted. A caller-supplied VS described below keeps its Feature 005 behavior.
+
 ## Goal and scope
 
 Save an expected payment so Pairrot knows which tenant expects money, on which bank account, and for which NaLekci reservation. Generate its payment instructions and QR from the saved record using the existing Feature 004 code.

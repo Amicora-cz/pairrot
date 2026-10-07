@@ -13,6 +13,9 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
     public const string ExternalIdUniqueIndex = "payment_requests_tenant_external_id_unique";
     public const string VariableSymbolUniqueIndex = "payment_requests_connection_variable_symbol_unique";
 
+    /// <summary>The symbol key as a number, for the allocator's indexed gap search (Feature 012); computed by the database.</summary>
+    public const string VariableSymbolNumberProperty = "VariableSymbolNumber";
+
     public void Configure(EntityTypeBuilder<PaymentRequest> builder)
     {
         builder.ToTable("payment_requests", t =>
@@ -25,6 +28,8 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
             t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
             t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
             t.HasCheckConstraint("payment_requests_status_valid", $"status IN ({SnakeCaseEnum<PaymentRequestStatus>.SqlList})");
+            t.HasCheckConstraint("payment_requests_variable_symbol_source_valid",
+                $"variable_symbol_source IN ({SnakeCaseEnum<VariableSymbolSource>.SqlList})");
 
             // Feature 009: the stored status follows from the paid amount; a cancelled request has nothing paid.
             t.HasCheckConstraint(
@@ -52,6 +57,11 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
         builder.Property(p => p.Currency).HasMaxLength(3);
         builder.Property(p => p.VariableSymbol).HasMaxLength(SpaydPayment.MaxVariableSymbolLength);
         builder.Property(p => p.VariableSymbolKey).HasMaxLength(SpaydPayment.MaxVariableSymbolLength);
+        builder.Property(p => p.VariableSymbolSource)
+            .HasConversion<SnakeCaseEnumConverter<VariableSymbolSource>>()
+            .HasMaxLength(20);
+        builder.Property<long>(VariableSymbolNumberProperty)
+            .HasComputedColumnSql("(variable_symbol_key::bigint)", stored: true);
         // Characters, not bytes; the payload limit is enforced when the message is validated.
         builder.Property(p => p.Message).HasMaxLength(SpaydPayment.MaxMessageLength * 2);
         builder.Property(p => p.Description).HasMaxLength(PaymentRequestRules.MaxDescriptionLength);
@@ -86,10 +96,32 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
 
         // Cancelled requests keep their symbol: a late payment must still be attributable.
         builder.HasIndex(p => new { p.BankConnectionId, p.VariableSymbolKey }).IsUnique().HasDatabaseName(VariableSymbolUniqueIndex);
+        builder.HasIndex(nameof(PaymentRequest.BankConnectionId), VariableSymbolNumberProperty)
+            .HasDatabaseName("payment_requests_connection_variable_symbol_number_idx");
 
         // IDs are UUIDv7, so (tenant_id, id) also serves listing by creation time.
         builder.HasIndex(p => new { p.TenantId, p.Id }).HasDatabaseName("payment_requests_tenant_idx");
         builder.HasIndex(p => new { p.TenantId, p.Status, p.Id }).HasDatabaseName("payment_requests_tenant_status_idx");
         builder.HasIndex(p => new { p.TenantId, p.Status, p.DueAt }).HasDatabaseName("payment_requests_tenant_due_idx");
+    }
+}
+
+// Feature 012: automatic variable symbols, one allocator per bank connection.
+
+internal sealed class VariableSymbolAllocatorConfiguration : IEntityTypeConfiguration<VariableSymbolAllocator>
+{
+    public void Configure(EntityTypeBuilder<VariableSymbolAllocator> builder)
+    {
+        builder.ToTable("variable_symbol_allocators", t => t.HasCheckConstraint(
+            "variable_symbol_allocators_next_candidate_range",
+            $"next_candidate BETWEEN 1 AND {PaymentRequestRules.ExhaustedVariableSymbolCursor}"));
+
+        builder.HasKey(a => a.BankConnectionId);
+        builder.Property(a => a.BankConnectionId).ValueGeneratedNever();
+
+        builder.HasOne<BankConnection>()
+            .WithOne()
+            .HasForeignKey<VariableSymbolAllocator>(a => a.BankConnectionId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

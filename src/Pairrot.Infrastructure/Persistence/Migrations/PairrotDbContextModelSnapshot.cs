@@ -1641,6 +1641,18 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(10)")
                         .HasColumnName("variable_symbol_key");
 
+                    b.Property<long>("VariableSymbolNumber")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bigint")
+                        .HasColumnName("variable_symbol_number")
+                        .HasComputedColumnSql("(variable_symbol_key::bigint)", true);
+
+                    b.Property<string>("VariableSymbolSource")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("variable_symbol_source");
+
                     b.Property<int>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("integer")
@@ -1655,6 +1667,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("BankConnectionId", "VariableSymbolKey")
                         .IsUnique()
                         .HasDatabaseName("payment_requests_connection_variable_symbol_unique");
+
+                    b.HasIndex("BankConnectionId", "VariableSymbolNumber")
+                        .HasDatabaseName("payment_requests_connection_variable_symbol_number_idx");
 
                     b.HasIndex("TenantId", "BankConnectionId")
                         .HasDatabaseName("ix_payment_requests_tenant_id_bank_connection_id");
@@ -1698,7 +1713,28 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
 
+                            t.HasCheckConstraint("payment_requests_variable_symbol_source_valid", "variable_symbol_source IN ('supplied', 'automatic')");
+
                             t.HasCheckConstraint("payment_requests_version_positive", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Payments.VariableSymbolAllocator", b =>
+                {
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<long>("NextCandidate")
+                        .HasColumnType("bigint")
+                        .HasColumnName("next_candidate");
+
+                    b.HasKey("BankConnectionId")
+                        .HasName("pk_variable_symbol_allocators");
+
+                    b.ToTable("variable_symbol_allocators", null, t =>
+                        {
+                            t.HasCheckConstraint("variable_symbol_allocators_next_candidate_range", "next_candidate BETWEEN 1 AND 10000000000");
                         });
                 });
 
@@ -3273,6 +3309,16 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payment_requests_bank_connections_tenant_id_bank_connection");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Payments.VariableSymbolAllocator", b =>
+                {
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithOne()
+                        .HasForeignKey("Pairrot.Core.Payments.VariableSymbolAllocator", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_variable_symbol_allocators_bank_connections_bank_connection");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>

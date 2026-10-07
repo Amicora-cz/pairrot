@@ -25,6 +25,7 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<UserAuditEvent> UserAuditEvents => Set<UserAuditEvent>();
     public DbSet<BankConnection> BankConnections => Set<BankConnection>();
     public DbSet<PaymentRequest> PaymentRequests => Set<PaymentRequest>();
+    public DbSet<VariableSymbolAllocator> VariableSymbolAllocators => Set<VariableSymbolAllocator>();
     public DbSet<InboundAddress> InboundAddresses => Set<InboundAddress>();
     public DbSet<InboundDeliveryReceipt> InboundDeliveryReceipts => Set<InboundDeliveryReceipt>();
     public DbSet<InboundMessage> InboundMessages => Set<InboundMessage>();

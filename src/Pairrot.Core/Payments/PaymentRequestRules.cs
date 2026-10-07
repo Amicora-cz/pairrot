@@ -28,13 +28,15 @@ public sealed record PaymentRequestInput(
 
 /// <summary>
 /// Validated creation input. <see cref="Payment"/> has no account yet: the IBAN comes from the
-/// saved bank connection.
+/// saved bank connection. In <see cref="VariableSymbolSource.Automatic"/> mode it has no symbol
+/// either, and <see cref="VariableSymbolKey"/> is <c>null</c> until one is assigned.
 /// </summary>
 public sealed record PaymentRequestDraft(
     Guid BankConnectionId,
     string ExternalId,
     SpaydPayment Payment,
-    string VariableSymbolKey,
+    VariableSymbolSource VariableSymbolSource,
+    string? VariableSymbolKey,
     string? Description,
     DateTimeOffset? DueAt,
     string Fingerprint);
@@ -54,7 +56,20 @@ public static partial class PaymentRequestRules
     /// </summary>
     public const string QrGeneratorVersion = "pairrot-spayd-1";
 
-    /// <summary>Validates creation input in the order of the request fields; nothing here reads the database.</summary>
+    /// <summary>
+    /// The highest automatically assigned symbol (Feature 012). Automatic symbols are decimal
+    /// numbers from 1 to this value, without leading zeros, never reused or wrapped around.
+    /// </summary>
+    public const long MaxAutomaticVariableSymbol = 9_999_999_999;
+
+    /// <summary>An allocator cursor past <see cref="MaxAutomaticVariableSymbol"/>: the connection has no automatic symbol left.</summary>
+    public const long ExhaustedVariableSymbolCursor = MaxAutomaticVariableSymbol + 1;
+
+    /// <summary>
+    /// Validates creation input in the order of the request fields; nothing here reads the
+    /// database. An omitted or null symbol asks for automatic assignment; a supplied one is
+    /// validated as before and never replaced.
+    /// </summary>
     public static PaymentRequestParseResult Validate(PaymentRequestInput input)
     {
         if (input.BankConnectionId is not { } connectionId)
@@ -65,12 +80,6 @@ public static partial class PaymentRequestRules
         if (ValidateExternalId(input.ExternalId) is { } externalIdError)
         {
             return Fail(PaymentRequestErrors.InvalidExternalId, "external_id", externalIdError);
-        }
-
-        if (input.VariableSymbol is null)
-        {
-            return Fail(PaymentErrors.InvalidVariableSymbol, "variable_symbol",
-                $"variable_symbol is required: 1 to {SpaydPayment.MaxVariableSymbolLength} digits.");
         }
 
         var payment = SpaydPayment.Create("", input.Amount, input.Currency, input.VariableSymbol, input.Message);
@@ -88,14 +97,11 @@ public static partial class PaymentRequestRules
         var description = NormalizeText(input.Description);
         var dueAt = NormalizeDueAt(input.DueAt);
         var spayd = payment.Payment!;
-        return new PaymentRequestParseResult(new PaymentRequestDraft(
-            connectionId,
-            externalId,
-            spayd,
-            VariableSymbolKey(spayd.VariableSymbol!),
-            description,
-            dueAt,
-            Fingerprint(connectionId, externalId, spayd, description, dueAt)), null);
+        return new PaymentRequestParseResult(spayd.VariableSymbol is { } symbol
+            ? new PaymentRequestDraft(connectionId, externalId, spayd, VariableSymbolSource.Supplied, VariableSymbolKey(symbol),
+                description, dueAt, Fingerprint(connectionId, externalId, spayd, description, dueAt))
+            : new PaymentRequestDraft(connectionId, externalId, spayd, VariableSymbolSource.Automatic, null,
+                description, dueAt, AutomaticFingerprint(connectionId, externalId, spayd, description, dueAt)), null);
     }
 
     public static string? ValidateExternalId(string? externalId) => externalId switch
@@ -158,15 +164,14 @@ public static partial class PaymentRequestRules
     }
 
     /// <summary>
-    /// SHA-256 over a canonical JSON array of the validated creation input. Omitted and null
-    /// optional fields are both <c>null</c>; the symbol and message are kept exactly as they go
-    /// into the payment, so <c>000123</c> and <c>123</c> are different input.
+    /// SHA-256 over a canonical JSON array of the validated creation input with a supplied
+    /// symbol. Omitted and null optional fields are both <c>null</c>; the symbol and message are
+    /// kept exactly as they go into the payment, so <c>000123</c> and <c>123</c> are different input.
+    /// Saved fingerprints are never recomputed, so this calculation must not change.
     /// </summary>
     public static string Fingerprint(
-        Guid connectionId, string externalId, SpaydPayment payment, string? description, DateTimeOffset? dueAt)
-    {
-        object?[] canonical =
-        [
+        Guid connectionId, string externalId, SpaydPayment payment, string? description, DateTimeOffset? dueAt) =>
+        Hash([
             "v1",
             connectionId.ToString("D"),
             externalId,
@@ -175,11 +180,33 @@ public static partial class PaymentRequestRules
             payment.VariableSymbol,
             payment.Message,
             description,
-            dueAt?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture),
-        ];
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(canonical)));
-        return Convert.ToHexStringLower(bytes);
-    }
+            FormatDueAt(dueAt),
+        ]);
+
+    /// <summary>
+    /// Like <see cref="Fingerprint"/> for creation that asked for an automatic symbol (Feature 012).
+    /// It records the automatic intent, not the assigned value, so a retry without a symbol replays
+    /// and a retry that supplies one, even the assigned one, conflicts.
+    /// </summary>
+    public static string AutomaticFingerprint(
+        Guid connectionId, string externalId, SpaydPayment payment, string? description, DateTimeOffset? dueAt) =>
+        Hash([
+            "v2",
+            connectionId.ToString("D"),
+            externalId,
+            payment.Amount,
+            payment.Currency,
+            "automatic",
+            payment.Message,
+            description,
+            FormatDueAt(dueAt),
+        ]);
+
+    private static string? FormatDueAt(DateTimeOffset? dueAt) =>
+        dueAt?.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture);
+
+    private static string Hash(object?[] canonical) =>
+        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(canonical))));
 
     [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,7})?)?(Z|[+-]\d{2}:\d{2})$")]
     private static partial Regex IsoTimestampWithOffset();
