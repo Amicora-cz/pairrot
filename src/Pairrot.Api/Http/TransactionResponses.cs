@@ -2,6 +2,7 @@ using System.Text.Json;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
 using Pairrot.Core.Transactions;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Transactions;
 
 namespace Pairrot.Api.Http;
@@ -9,9 +10,11 @@ namespace Pairrot.Api.Http;
 /// <summary>
 /// A recorded bank movement. <see cref="Evidence"/> is <c>live</c> only for messages received by
 /// a live instance; fixture and test records are never live bank receipts. Recording a
-/// transaction marks no payment request paid.
+/// transaction marks no payment request paid; an allocation does (Feature 009, see <see cref="Matching"/>).
 /// </summary>
 /// <param name="Evidence"><c>live</c>, <c>test</c>, or <c>fixture</c>.</param>
+/// <param name="HandlingState"><c>unallocated</c>, <c>allocated</c>, <c>ignored</c>, <c>rejected</c>, or <c>duplicate</c>.</param>
+/// <param name="Version">Send it as <c>expected_transaction_version</c> / <c>expected_version</c> in manual writes.</param>
 public sealed record IncomingTransactionResponse(
     Guid Id,
     Guid TenantId,
@@ -32,11 +35,18 @@ public sealed record IncomingTransactionResponse(
     IReadOnlyList<IngestionReason> IngestionReasons,
     string Evidence,
     string OriginPath,
+    string HandlingState,
+    int Version,
+    TransactionMatchingResponse? Matching,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<TransactionSourceResponse>? Sources = null)
 {
-    public static IncomingTransactionResponse From(IncomingTransaction t, IReadOnlyList<TransactionSource>? sources = null) => new(
+    public static IncomingTransactionResponse From(TransactionView view, IReadOnlyList<TransactionSource>? sources = null) =>
+        From(view.Transaction, view.Matching, sources);
+
+    public static IncomingTransactionResponse From(
+        IncomingTransaction t, TransactionMatching? matching = null, IReadOnlyList<TransactionSource>? sources = null) => new(
         t.Id,
         t.TenantId,
         t.BankConnectionId,
@@ -56,6 +66,9 @@ public sealed record IncomingTransactionResponse(
         JsonSerializer.Deserialize<List<IngestionReason>>(t.IngestionReasons, StoredJson) ?? [],
         EvidenceOf(t.SourceKind, t.Environment),
         InboundMessageResponse.Snake(t.OriginPath),
+        InboundMessageResponse.Snake(t.Handling),
+        t.Version,
+        matching is null ? null : TransactionMatchingResponse.From(t, matching),
         t.CreatedAt,
         t.UpdatedAt,
         sources?.Select(s => new TransactionSourceResponse(s.InboundMessageId, s.ParseRunId, s.CreatedAt)).ToList());

@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, apiPng, ApiError, type BankConnection, type ListResponse, type PaymentInstructions, type PaymentRequest, type Tenant } from '../api'
+import {
+  api,
+  apiPng,
+  ApiError,
+  type BankConnection,
+  type ListResponse,
+  type PaymentInstructions,
+  type PaymentRequest,
+  type PaymentRequestStatus,
+  type Tenant,
+} from '../api'
 import { ErrorText, Section } from '../components'
-import { formatDate, formatMinorUnits, toMinorUnits, useAction } from '../util'
+import { formatDate, formatMinorUnits, toMinorUnits, useAction, words } from '../util'
+import { PaymentStatusBadge, RequestPayments } from './Matching'
 
 interface Filters {
   external_id: string
-  status: '' | 'open' | 'cancelled'
+  status: '' | PaymentRequestStatus
   overdue: '' | 'true' | 'false'
   bank_connection_id: string
 }
 
 const NO_FILTERS: Filters = { external_id: '', status: '', overdue: '', bank_connection_id: '' }
+
+const STATUSES: PaymentRequestStatus[] = ['open', 'partially_paid', 'paid', 'overpaid', 'cancelled']
 
 /**
  * Expected payments of one tenant: the selected tenant (`/v1/tenant`) or a direct child
@@ -57,8 +70,8 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
       <Section title={`Expected payments: ${owner.configuration.name}`}>
         <p className="muted">
           Owner: <strong>{owner.configuration.name}</strong> <code>{owner.external_id}</code>
-          {owner.parent_tenant_id === null ? ' (root tenant)' : ' (subtenant)'}. Pairrot does not match incoming payments yet,
-          so the paid amount stays 0 and nothing is marked paid automatically.
+          {owner.parent_tenant_id === null ? ' (root tenant)' : ' (subtenant)'}. A request is paid by allocated bank transactions:
+          an exact payment is allocated automatically, partial payments and top-ups by hand under Bank transactions.
         </p>
         {!readOnly && (
           <CreateRequest
@@ -87,8 +100,11 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
           />
           <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as Filters['status'] })}>
             <option value="">any state</option>
-            <option value="open">open</option>
-            <option value="cancelled">cancelled</option>
+            {STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {words(value)}
+              </option>
+            ))}
           </select>
           <select value={filters.overdue} onChange={(e) => setFilters({ ...filters, overdue: e.target.value as Filters['overdue'] })}>
             <option value="">overdue or not</option>
@@ -158,6 +174,7 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
         <RequestDetail
           key={opened.id}
           basePath={basePath}
+          prefix={prefix}
           owner={owner}
           request={opened}
           connection={connections.find((c) => c.id === opened.bank_connection_id) ?? null}
@@ -176,7 +193,7 @@ function connectionName(c: BankConnection) {
 function RequestState({ request: r }: { request: PaymentRequest }) {
   return (
     <>
-      <span className={`badge badge-${r.status}`}>{r.status}</span>
+      <PaymentStatusBadge status={r.status} />
       {r.is_overdue && <span className="badge badge-overdue">overdue</span>}
     </>
   )
@@ -322,6 +339,7 @@ interface Preview {
 
 function RequestDetail({
   basePath,
+  prefix,
   owner,
   request: r,
   connection,
@@ -329,6 +347,7 @@ function RequestDetail({
   onChanged,
 }: {
   basePath: string
+  prefix: string
   owner: Tenant
   request: PaymentRequest
   connection: BankConnection | null
@@ -342,9 +361,17 @@ function RequestDetail({
   const [preview, setPreview] = useState<Preview | null>(null)
   const [stale, setStale] = useState<string | null>(null)
   const { busy, error, run, setError } = useAction()
+  // Only an open request (nothing paid) hands out its original full-amount instructions or can be cancelled;
+  // description and due time stay editable while something is left to pay.
   const open = r.status === 'open'
-  const canChange = !readOnly && open
+  const canChange = !readOnly && (open || r.status === 'partially_paid')
   const payable = open && connection?.status === 'active' && !readOnly
+
+  // The list has no review links; the detail does.
+  useEffect(() => {
+    void run(async () => onChanged(await api<PaymentRequest>('GET', path)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
 
   useEffect(() => () => {
     if (preview) URL.revokeObjectURL(preview.imageUrl)
@@ -396,6 +423,12 @@ function RequestDetail({
           <dd>{formatMinorUnits(r.paid_amount, r.currency)}</dd>
           <dt>Remaining</dt>
           <dd>{r.remaining_amount === null ? '— (cancelled)' : formatMinorUnits(r.remaining_amount, r.currency)}</dd>
+          {r.overpaid_amount > 0 && (
+            <>
+              <dt>Overpaid</dt>
+              <dd>{formatMinorUnits(r.overpaid_amount, r.currency)} (no refund is sent by Pairrot)</dd>
+            </>
+          )}
           <dt>Variable symbol</dt>
           <dd>{r.variable_symbol}</dd>
           <dt>Message</dt>
@@ -411,7 +444,7 @@ function RequestDetail({
           <dd>{formatDate(r.created_at)}</dd>
           <dt>Updated</dt>
           <dd>{formatDate(r.updated_at)}</dd>
-          {!open && (
+          {r.status === 'cancelled' && (
             <>
               <dt>Cancelled</dt>
               <dd>
@@ -495,6 +528,7 @@ function RequestDetail({
               Save
             </button>
           </form>
+          {open && (
           <form
             className="row"
             onSubmit={(e) => {
@@ -508,8 +542,14 @@ function RequestDetail({
               Cancel request
             </button>
           </form>
+          )}
         </>
       )}
+
+      {!open && r.status !== 'cancelled' && (
+        <p className="muted">The request has received a payment, so its original full-amount QR code is not issued again.</p>
+      )}
+      <RequestPayments path={path} prefix={prefix} request={r} readOnly={readOnly} onChanged={onChanged} />
     </Section>
   )
 }

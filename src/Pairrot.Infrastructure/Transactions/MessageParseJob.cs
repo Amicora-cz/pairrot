@@ -11,6 +11,7 @@ using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Jobs;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 
@@ -28,6 +29,7 @@ public class MessageParseJob(
     BackgroundJobQueue jobs,
     BankProfileRegistry profiles,
     IOptions<ForwardingOptions> forwarding,
+    ReviewCaseRecorder reviews,
     ILogger<MessageParseJob> logger) : IBackgroundJobHandler
 {
     private const int SaveAttempts = 3;
@@ -132,7 +134,9 @@ public class MessageParseJob(
     /// <summary>
     /// Duplicate and reprocessing rules: one movement per message; a proven bank reference links
     /// messages to one movement; changed facts dispute instead of overwriting; similar movements
-    /// without proof are flagged, never merged.
+    /// without proof are flagged, never merged. Feature 009: every unresolved result gets a review
+    /// case, a transaction that loses eligibility loses its allocation in this same transaction,
+    /// and a new accepted transaction is queued for matching.
     /// </summary>
     private async Task RecordTransactionAsync(
         MessageParseRun run, ParseEvaluation evaluation, InboundMessage message, IBankProfile profile, CancellationToken ct)
@@ -144,10 +148,24 @@ public class MessageParseJob(
         {
             if (linked is not null)
             {
-                // A message that once supported a movement no longer does (untrusted, not a payment, unrecognized).
-                Dispute(linked, run, ParseReasons.ReprocessingRejected,
-                    $"Parser {run.ParserVersion} no longer accepts the supporting message ({Snake(evaluation.Outcome)}).");
                 run.TransactionId = linked.Id;
+                if (linked.ManuallyConfirmed && evaluation.Candidate?.CriticalFacts == Facts(linked))
+                {
+                    // A person confirmed this receipt from the same unaccepted evidence; the decision stands.
+                    Resolve(run, run.Outcome, ParseReasons.Unchanged,
+                        "The message still supports the manually confirmed transaction; the review decision stands.");
+                    return;
+                }
+
+                // A message that once supported a movement no longer does (untrusted, not a payment, unrecognized).
+                var rejected = $"Parser {run.ParserVersion} no longer accepts the supporting message ({Snake(evaluation.Outcome)}).";
+                Dispute(linked, run, ParseReasons.ReprocessingRejected, rejected);
+                await reviews.OnDisputedAsync(linked, run, ParseReasons.ReprocessingRejected, rejected,
+                    $"{Snake(evaluation.Outcome)}|{evaluation.Candidate?.CriticalFacts}", ct);
+            }
+            else if (evaluation.Outcome == ParseOutcome.ReviewRequired && evaluation.Candidate is { } proposal)
+            {
+                await reviews.OnUnverifiedCandidateAsync(message.Id, message.TenantId!.Value, message.BankConnectionId!.Value, run, proposal, ct);
             }
 
             return;
@@ -162,10 +180,11 @@ public class MessageParseJob(
             }
             else
             {
-                Dispute(linked, run, ParseReasons.ReprocessingChangedFacts,
-                    $"Parser {run.ParserVersion} extracted different payment facts from the supporting message.");
+                var changed = $"Parser {run.ParserVersion} extracted different payment facts from the supporting message.";
+                Dispute(linked, run, ParseReasons.ReprocessingChangedFacts, changed);
                 Resolve(run, ParseOutcome.ReviewRequired, ParseReasons.ReprocessingChangedFacts,
                     "The new extraction changes payment-critical facts; the transaction is disputed and the proposal kept in this run.");
+                await reviews.OnDisputedAsync(linked, run, ParseReasons.ReprocessingChangedFacts, changed, candidate.CriticalFacts, ct);
             }
 
             return;
@@ -183,13 +202,15 @@ public class MessageParseJob(
                     AddSource(known, message, run);
                     Resolve(run, ParseOutcome.Duplicate, ParseReasons.Duplicate,
                         "Another notification of an already recorded movement (same bank reference).");
+                    await reviews.SupersedeCandidateAsync(message.Id, ct);
                 }
                 else
                 {
-                    Dispute(known, run, ParseReasons.BankReferenceConflict,
-                        "Another notification with the same bank reference states different payment facts.");
+                    var conflict = "Another notification with the same bank reference states different payment facts.";
+                    Dispute(known, run, ParseReasons.BankReferenceConflict, conflict);
                     Resolve(run, ParseOutcome.ReviewRequired, ParseReasons.BankReferenceConflict,
                         "The bank reference is already recorded with different facts; no second movement was created.");
+                    await reviews.OnDisputedAsync(known, run, ParseReasons.BankReferenceConflict, conflict, candidate.CriticalFacts, ct);
                 }
 
                 return;
@@ -236,6 +257,7 @@ public class MessageParseJob(
         db.IncomingTransactions.Add(transaction);
         AddSource(transaction, message, run);
         run.TransactionId = transaction.Id;
+        await reviews.SupersedeCandidateAsync(message.Id, ct);
 
         if (similar.Count > 0)
         {
@@ -247,6 +269,12 @@ public class MessageParseJob(
             }
 
             Resolve(run, ParseOutcome.Parsed, ParseReasons.PossibleDuplicate, $"Recorded for review. {hint}");
+            await reviews.OnPossibleDuplicateAsync(transaction, similar, run, ct);
+        }
+        else
+        {
+            // Saved with the transaction, so a recorded receipt is always matched eventually.
+            jobs.Add(BackgroundJobTypes.MatchTransaction, transaction.Id, 1, BackgroundJobQueue.SystemRequester);
         }
     }
 
@@ -283,6 +311,7 @@ public class MessageParseJob(
         var reasons = JsonSerializer.Deserialize<List<IngestionReason>>(transaction.IngestionReasons, Json) ?? [];
         reasons.Add(new IngestionReason(code, message, run.Id, jobs.Now()));
         transaction.IngestionReasons = JsonSerializer.Serialize(reasons, Json);
+        transaction.Version++;
         transaction.UpdatedAt = jobs.Now();
     }
 
@@ -385,7 +414,9 @@ public class MessageParseJob(
     private static bool IsRace(DbUpdateException ex) => ex is DbUpdateConcurrencyException
         || TenantService.IsUniqueViolation(ex, MessageParseRunConfiguration.GenerationUniqueIndex)
         || TenantService.IsUniqueViolation(ex, IncomingTransactionConfiguration.BankReferenceUniqueIndex)
-        || TenantService.IsUniqueViolation(ex, TransactionSourceConfiguration.MessageUniqueIndex);
+        || TenantService.IsUniqueViolation(ex, TransactionSourceConfiguration.MessageUniqueIndex)
+        || TenantService.IsUniqueViolation(ex, PaymentAllocationConfiguration.OneActiveIndex)
+        || TenantService.IsUniqueViolation(ex, PaymentChangeConfiguration.SequenceUniqueIndex);
 
     internal static string Snake<TEnum>(TEnum value) where TEnum : struct, Enum =>
         JsonNamingPolicy.SnakeCaseLower.ConvertName(value.ToString());

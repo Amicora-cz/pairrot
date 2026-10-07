@@ -963,6 +963,561 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Matching.ManualCommandReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("action");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("actor");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("idempotency_key");
+
+                    b.Property<string>("ResourceIds")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("resource_ids");
+
+                    b.Property<string>("ResponseBody")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("response_body");
+
+                    b.Property<int>("ResponseStatus")
+                        .HasColumnType("integer")
+                        .HasColumnName("response_status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_manual_command_receipts");
+
+                    b.HasIndex("TenantId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("manual_command_receipts_key_unique");
+
+                    b.ToTable("manual_command_receipts", null, t =>
+                        {
+                            t.HasCheckConstraint("manual_command_receipts_fingerprint_format", "fingerprint ~ '^[0-9a-f]{64}$'");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("created_by");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Evidence")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("evidence");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("method");
+
+                    b.Property<Guid>("PaymentRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_request_id");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("RevocationCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("revocation_code");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("revocation_reason");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("RevokedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("revoked_by");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_allocations");
+
+                    b.HasIndex("TransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("payment_allocations_one_active_per_transaction")
+                        .HasFilter("state = 'active'");
+
+                    b.HasIndex("PaymentRequestId", "Id")
+                        .HasDatabaseName("payment_allocations_request_idx");
+
+                    b.HasIndex("PaymentRequestId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_allocations_payment_request_id_tenant_id_bank_conne");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_allocations_transaction_id_tenant_id_bank_connectio");
+
+                    b.ToTable("payment_allocations", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_allocations_amount_positive", "amount > 0");
+
+                            t.HasCheckConstraint("payment_allocations_currency_valid", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("payment_allocations_evidence_valid", "evidence IN ('live', 'test', 'fixture')");
+
+                            t.HasCheckConstraint("payment_allocations_manual_reason", "method = 'automatic' OR btrim(coalesce(reason, '')) <> ''");
+
+                            t.HasCheckConstraint("payment_allocations_method_valid", "method IN ('automatic', 'manual')");
+
+                            t.HasCheckConstraint("payment_allocations_revocation_consistent", "(state = 'active' AND revoked_at IS NULL AND revoked_by IS NULL AND revocation_code IS NULL) OR (state = 'revoked' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND revocation_code IS NOT NULL)");
+
+                            t.HasCheckConstraint("payment_allocations_state_valid", "state IN ('active', 'revoked')");
+
+                            t.HasCheckConstraint("payment_allocations_version_positive", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentChange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("actor");
+
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("allocation_id");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<string>("Cause")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("cause");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Evidence")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("evidence");
+
+                    b.Property<long>("ExpectedAmount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("expected_amount");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("external_id");
+
+                    b.Property<long>("OverpaidAfter")
+                        .HasColumnType("bigint")
+                        .HasColumnName("overpaid_after");
+
+                    b.Property<long>("OverpaidBefore")
+                        .HasColumnType("bigint")
+                        .HasColumnName("overpaid_before");
+
+                    b.Property<long>("PaidAfter")
+                        .HasColumnType("bigint")
+                        .HasColumnName("paid_after");
+
+                    b.Property<long>("PaidBefore")
+                        .HasColumnType("bigint")
+                        .HasColumnName("paid_before");
+
+                    b.Property<Guid>("PaymentRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_request_id");
+
+                    b.Property<long?>("RemainingAfter")
+                        .HasColumnType("bigint")
+                        .HasColumnName("remaining_after");
+
+                    b.Property<long?>("RemainingBefore")
+                        .HasColumnType("bigint")
+                        .HasColumnName("remaining_before");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("sequence");
+
+                    b.Property<string>("StatusAfter")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status_after");
+
+                    b.Property<string>("StatusBefore")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status_before");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_request_changes");
+
+                    b.HasIndex("AllocationId")
+                        .HasDatabaseName("ix_payment_request_changes_allocation_id");
+
+                    b.HasIndex("PaymentRequestId", "Sequence")
+                        .IsUnique()
+                        .HasDatabaseName("payment_request_changes_sequence_unique");
+
+                    b.HasIndex("TenantId", "Id")
+                        .HasDatabaseName("payment_request_changes_tenant_idx");
+
+                    b.HasIndex("PaymentRequestId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_request_changes_payment_request_id_tenant_id_bank_c");
+
+                    b.ToTable("payment_request_changes", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_request_changes_amounts_valid", "paid_before >= 0 AND paid_after >= 0 AND overpaid_before >= 0 AND overpaid_after >= 0");
+
+                            t.HasCheckConstraint("payment_request_changes_cause_valid", "cause IN ('automatic_allocation', 'manual_allocation', 'allocation_revoked', 'transaction_review_required', 'cancelled')");
+
+                            t.HasCheckConstraint("payment_request_changes_sequence_positive", "sequence >= 1");
+
+                            t.HasCheckConstraint("payment_request_changes_status_after_valid", "status_after IN ('open', 'partially_paid', 'paid', 'overpaid', 'cancelled')");
+
+                            t.HasCheckConstraint("payment_request_changes_status_before_valid", "status_before IN ('open', 'partially_paid', 'paid', 'overpaid', 'cancelled')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCase", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("EvidenceKey")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("evidence_key");
+
+                    b.Property<Guid?>("InboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("inbound_message_id");
+
+                    b.Property<string>("Issue")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("issue");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<string>("ReasonMessage")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason_message");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("resolution");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_review_cases");
+
+                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
+                        .HasName("ak_payment_review_cases_id_tenant_id_bank_connection_id");
+
+                    b.HasIndex("InboundMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("payment_review_cases_message_unique")
+                        .HasFilter("inbound_message_id IS NOT NULL");
+
+                    b.HasIndex("TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_review_cases_tenant_id_bank_connection_id");
+
+                    b.HasIndex("TenantId", "State", "Id")
+                        .HasDatabaseName("payment_review_cases_tenant_state_idx");
+
+                    b.ToTable("payment_review_cases", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_review_cases_issue_valid", "issue IN ('unverified_candidate', 'possible_duplicate', 'disputed')");
+
+                            t.HasCheckConstraint("payment_review_cases_message_consistent", "(issue = 'unverified_candidate') = (inbound_message_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("payment_review_cases_resolution_valid", "resolution IS NULL OR resolution IN ('confirm_payment', 'confirm_distinct', 'mark_duplicate', 'keep_existing', 'reject', 'reopen', 'superseded')");
+
+                            t.HasCheckConstraint("payment_review_cases_resolved_consistent", "(state = 'resolved' AND resolved_at IS NOT NULL AND resolution IS NOT NULL) OR state = 'open'");
+
+                            t.HasCheckConstraint("payment_review_cases_state_valid", "state IN ('open', 'resolved')");
+
+                            t.HasCheckConstraint("payment_review_cases_version_positive", "version >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCaseMember", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AddedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("added_at");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<Guid>("CaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("case_id");
+
+                    b.Property<Guid?>("ParseRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parse_run_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_review_case_members");
+
+                    b.HasIndex("TransactionId")
+                        .HasDatabaseName("payment_review_case_members_transaction_idx");
+
+                    b.HasIndex("CaseId", "ParseRunId")
+                        .IsUnique()
+                        .HasDatabaseName("payment_review_case_members_run_unique")
+                        .HasFilter("parse_run_id IS NOT NULL");
+
+                    b.HasIndex("CaseId", "TransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("payment_review_case_members_transaction_unique")
+                        .HasFilter("transaction_id IS NOT NULL");
+
+                    b.HasIndex("CaseId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_review_case_members_case_id_tenant_id_bank_connecti");
+
+                    b.HasIndex("ParseRunId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_review_case_members_parse_run_id_tenant_id_bank_con");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_review_case_members_transaction_id_tenant_id_bank_c");
+
+                    b.ToTable("payment_review_case_members", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_review_case_members_one_target", "(transaction_id IS NULL) <> (parse_run_id IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewDecision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("action");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("actor");
+
+                    b.Property<Guid?>("CanonicalTransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("canonical_transaction_id");
+
+                    b.Property<Guid>("CaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("case_id");
+
+                    b.Property<int>("CaseVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("case_version");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedTransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_transaction_id");
+
+                    b.Property<string>("Members")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("members");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_review_decisions");
+
+                    b.HasIndex("CaseId", "CreatedAt")
+                        .HasDatabaseName("payment_review_decisions_case_idx");
+
+                    b.ToTable("payment_review_decisions", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_review_decisions_action_valid", "action IN ('confirm_payment', 'confirm_distinct', 'mark_duplicate', 'keep_existing', 'reject', 'reopen', 'superseded')");
+
+                            t.HasCheckConstraint("payment_review_decisions_reason_not_blank", "btrim(reason) <> ''");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Core.Payments.PaymentRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -991,6 +1546,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("cancelled_at");
+
+                    b.Property<int>("ChangeSequence")
+                        .HasColumnType("integer")
+                        .HasColumnName("change_sequence");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -1033,6 +1592,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)")
                         .HasColumnName("message");
+
+                    b.Property<long>("PaidAmount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("paid_amount");
 
                     b.Property<string>("QrFormat")
                         .IsRequired()
@@ -1086,6 +1649,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_payment_requests");
 
+                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
+                        .HasName("ak_payment_requests_id_tenant_id_bank_connection_id");
+
                     b.HasIndex("BankConnectionId", "VariableSymbolKey")
                         .IsUnique()
                         .HasDatabaseName("payment_requests_connection_variable_symbol_unique");
@@ -1112,6 +1678,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("payment_requests_cancellation_consistent", "(status = 'cancelled' AND cancelled_at IS NOT NULL) OR (status <> 'cancelled' AND cancelled_at IS NULL AND cancellation_reason IS NULL)");
 
+                            t.HasCheckConstraint("payment_requests_change_sequence_valid", "change_sequence >= 0");
+
                             t.HasCheckConstraint("payment_requests_currency_valid", "currency = 'CZK'");
 
                             t.HasCheckConstraint("payment_requests_external_id_not_blank", "btrim(external_id) <> ''");
@@ -1120,9 +1688,11 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
 
+                            t.HasCheckConstraint("payment_requests_paid_consistent", "(status = 'open' AND paid_amount = 0) OR (status = 'partially_paid' AND paid_amount > 0 AND paid_amount < amount) OR (status = 'paid' AND paid_amount = amount) OR (status = 'overpaid' AND paid_amount > amount) OR (status = 'cancelled' AND paid_amount = 0)");
+
                             t.HasCheckConstraint("payment_requests_qr_format_valid", "qr_format = 'SPAYD'");
 
-                            t.HasCheckConstraint("payment_requests_status_valid", "status IN ('open', 'cancelled')");
+                            t.HasCheckConstraint("payment_requests_status_valid", "status IN ('open', 'partially_paid', 'paid', 'overpaid', 'cancelled')");
 
                             t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
 
@@ -1340,6 +1910,15 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("amount");
 
+                    b.Property<string>("AutoMatchBlockReason")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("auto_match_block_reason");
+
+                    b.Property<bool>("AutoMatchBlocked")
+                        .HasColumnType("boolean")
+                        .HasColumnName("auto_match_blocked");
+
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("bank_connection_id");
@@ -1359,11 +1938,19 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("date")
                         .HasColumnName("booked_on");
 
+                    b.Property<Guid?>("CanonicalTransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("canonical_transaction_id");
+
                     b.Property<string>("ComparisonFingerprint")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("comparison_fingerprint");
+
+                    b.Property<Guid?>("ConfirmationDecisionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("confirmation_decision_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -1381,6 +1968,26 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(10)")
                         .HasColumnName("environment");
 
+                    b.Property<DateTimeOffset?>("HandledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("handled_at");
+
+                    b.Property<string>("HandledBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("handled_by");
+
+                    b.Property<string>("Handling")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("handling");
+
+                    b.Property<string>("HandlingReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("handling_reason");
+
                     b.Property<string>("IngestionReasons")
                         .IsRequired()
                         .HasColumnType("text")
@@ -1391,6 +1998,23 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("ingestion_status");
+
+                    b.Property<bool>("ManuallyConfirmed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("manually_confirmed");
+
+                    b.Property<DateTimeOffset?>("MatchCheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("match_checked_at");
+
+                    b.Property<Guid?>("MatchRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("match_request_id");
+
+                    b.Property<string>("MatchResult")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("match_result");
 
                     b.Property<string>("Message")
                         .HasMaxLength(500)
@@ -1456,6 +2080,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(10)")
                         .HasColumnName("variable_symbol_key");
 
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
                     b.Property<uint>("xmin")
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
@@ -1471,6 +2099,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("BankConnectionId", "ComparisonFingerprint")
                         .HasDatabaseName("incoming_transactions_fingerprint_idx");
 
+                    b.HasIndex("BankConnectionId", "VariableSymbolKey")
+                        .HasDatabaseName("incoming_transactions_unallocated_symbol_idx")
+                        .HasFilter("handling = 'unallocated'");
+
                     b.HasIndex("TenantId", "BankConnectionId")
                         .HasDatabaseName("ix_incoming_transactions_tenant_id_bank_connection_id");
 
@@ -1482,15 +2114,22 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("incoming_transactions_bank_reference_unique")
                         .HasFilter("bank_transaction_id IS NOT NULL");
 
+                    b.HasIndex("CanonicalTransactionId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_incoming_transactions_canonical_transaction_id_tenant_id_ba");
+
                     b.ToTable("incoming_transactions", null, t =>
                         {
                             t.HasCheckConstraint("incoming_transactions_amount_positive", "amount > 0");
+
+                            t.HasCheckConstraint("incoming_transactions_canonical_consistent", "(handling = 'duplicate' AND canonical_transaction_id IS NOT NULL AND canonical_transaction_id <> id) OR (handling <> 'duplicate' AND canonical_transaction_id IS NULL)");
 
                             t.HasCheckConstraint("incoming_transactions_currency_valid", "currency ~ '^[A-Z]{3}$'");
 
                             t.HasCheckConstraint("incoming_transactions_environment_valid", "environment IN ('test', 'live')");
 
                             t.HasCheckConstraint("incoming_transactions_fingerprint_format", "comparison_fingerprint ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("incoming_transactions_handling_valid", "handling IN ('unallocated', 'allocated', 'ignored', 'rejected', 'duplicate')");
 
                             t.HasCheckConstraint("incoming_transactions_origin_path_valid", "origin_path IN ('direct', 'automatic_forward', 'manual_forward')");
 
@@ -1501,6 +2140,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("incoming_transactions_symbol_key_consistent", "(variable_symbol IS NULL AND variable_symbol_key IS NULL) OR (variable_symbol IS NOT NULL AND variable_symbol_key IS NOT NULL)");
 
                             t.HasCheckConstraint("incoming_transactions_symbol_valid", "variable_symbol IS NULL OR variable_symbol ~ '^[0-9]{1,10}$'");
+
+                            t.HasCheckConstraint("incoming_transactions_version_positive", "version >= 1");
                         });
                 });
 
@@ -2042,6 +2683,98 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_inbound_messages_inbound_addresses_inbound_address_id_tenan");
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Matching.ManualCommandReceipt", b =>
+                {
+                    b.HasOne("Pairrot.Core.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_manual_command_receipts_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentAllocation", b =>
+                {
+                    b.HasOne("Pairrot.Core.Payments.PaymentRequest", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentRequestId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_allocations_payment_requests_payment_request_id_ten");
+
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_allocations_incoming_transactions_transaction_id_te");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentChange", b =>
+                {
+                    b.HasOne("Pairrot.Core.Matching.PaymentAllocation", null)
+                        .WithMany()
+                        .HasForeignKey("AllocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_payment_request_changes_payment_allocations_allocation_id");
+
+                    b.HasOne("Pairrot.Core.Payments.PaymentRequest", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentRequestId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_request_changes_payment_requests_payment_request_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCase", b =>
+                {
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_review_cases_bank_connections_tenant_id_bank_connec");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCaseMember", b =>
+                {
+                    b.HasOne("Pairrot.Core.Matching.PaymentReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("CaseId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_review_case_members_payment_review_cases_case_id_te");
+
+                    b.HasOne("Pairrot.Core.Transactions.MessageParseRun", null)
+                        .WithMany()
+                        .HasForeignKey("ParseRunId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_payment_review_case_members_message_parse_runs_parse_run_id");
+
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_payment_review_case_members_incoming_transactions_transacti");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewDecision", b =>
+                {
+                    b.HasOne("Pairrot.Core.Matching.PaymentReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("CaseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_review_decisions_payment_review_cases_case_id");
+                });
+
             modelBuilder.Entity("Pairrot.Core.Payments.PaymentRequest", b =>
                 {
                     b.HasOne("Pairrot.Core.Tenants.Tenant", null)
@@ -2114,6 +2847,13 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_incoming_transactions_bank_connections_tenant_id_bank_conne");
+
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalTransactionId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_incoming_transactions_incoming_transactions_canonical_trans");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Transactions.MessageParseRun", b =>

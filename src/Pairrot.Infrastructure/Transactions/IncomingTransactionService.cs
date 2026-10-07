@@ -17,7 +17,8 @@ public sealed record TransactionFilter(
     DateOnly? BookedTo = null,
     long? Amount = null,
     string? VariableSymbol = null,
-    IngestionStatus? IngestionStatus = null);
+    IngestionStatus? IngestionStatus = null,
+    TransactionHandling? Handling = null);
 
 /// <summary>A transaction with the messages supporting it, oldest link first.</summary>
 public sealed record TransactionDetail(IncomingTransaction Transaction, IReadOnlyList<TransactionSource> Sources);
@@ -30,7 +31,7 @@ public sealed record QueuedParse(BackgroundJob Job, bool Created);
 /// <summary>
 /// Incoming transactions and parse history as their owners see them: the caller's tenant or,
 /// for parent management, a direct child. Foreign records look missing. Nothing here changes a
-/// payment request.
+/// payment request; allocations are Feature 009's.
 /// </summary>
 public class IncomingTransactionService(PairrotDbContext db, TenantService tenants, BackgroundJobQueue jobs)
 {
@@ -73,6 +74,11 @@ public class IncomingTransactionService(PairrotDbContext db, TenantService tenan
         if (filter.IngestionStatus is { } status)
         {
             query = query.Where(t => t.IngestionStatus == status);
+        }
+
+        if (filter.Handling is { } handling)
+        {
+            query = query.Where(t => t.Handling == handling);
         }
 
         if (before is { } cursor)

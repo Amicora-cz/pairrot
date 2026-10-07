@@ -89,6 +89,12 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
             t.HasCheckConstraint("incoming_transactions_environment_valid", "environment IN ('test', 'live')");
             t.HasCheckConstraint("incoming_transactions_origin_path_valid", $"origin_path IN ({SnakeCaseEnum<OriginPath>.SqlList})");
             t.HasCheckConstraint("incoming_transactions_fingerprint_format", "comparison_fingerprint ~ '^[0-9a-f]{64}$'");
+            t.HasCheckConstraint("incoming_transactions_handling_valid", $"handling IN ({SnakeCaseEnum<TransactionHandling>.SqlList})");
+            t.HasCheckConstraint(
+                "incoming_transactions_canonical_consistent",
+                "(handling = 'duplicate' AND canonical_transaction_id IS NOT NULL AND canonical_transaction_id <> id) "
+                + "OR (handling <> 'duplicate' AND canonical_transaction_id IS NULL)");
+            t.HasCheckConstraint("incoming_transactions_version_positive", "version >= 1");
         });
 
         builder.HasKey(t => t.Id);
@@ -108,6 +114,11 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
         builder.Property(t => t.SourceKind).HasConversion<LowercaseEnumConverter<InboundSourceKind>>().HasMaxLength(20);
         builder.Property(t => t.Environment).HasConversion<LowercaseEnumConverter<InboundEnvironment>>().HasMaxLength(10);
         builder.Property(t => t.OriginPath).HasConversion<SnakeCaseEnumConverter<OriginPath>>().HasMaxLength(30);
+        builder.Property(t => t.Handling).HasConversion<SnakeCaseEnumConverter<TransactionHandling>>().HasMaxLength(20);
+        builder.Property(t => t.HandlingReason).HasMaxLength(500);
+        builder.Property(t => t.HandledBy).HasMaxLength(200);
+        builder.Property(t => t.AutoMatchBlockReason).HasMaxLength(50);
+        builder.Property(t => t.MatchResult).HasMaxLength(50);
 
         // Status changes from concurrent runs never overwrite each other unseen.
         builder.Property<uint>("xmin").IsRowVersion();
@@ -120,6 +131,13 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
 
         builder.HasAlternateKey(t => new { t.Id, t.TenantId, t.BankConnectionId });
 
+        // A duplicate points to a record of the same owner and account.
+        builder.HasOne<IncomingTransaction>()
+            .WithMany()
+            .HasForeignKey(t => new { t.CanonicalTransactionId, t.TenantId, t.BankConnectionId })
+            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankConnectionId })
+            .OnDelete(DeleteBehavior.Restrict);
+
         // A proven bank reference identifies one movement per connection and profile.
         builder.HasIndex(t => new { t.BankConnectionId, t.BankProfile, t.BankTransactionId })
             .IsUnique()
@@ -128,6 +146,9 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
 
         builder.HasIndex(t => new { t.BankConnectionId, t.ComparisonFingerprint }).HasDatabaseName("incoming_transactions_fingerprint_idx");
         builder.HasIndex(t => new { t.TenantId, t.Id }).HasDatabaseName("incoming_transactions_tenant_idx");
+        builder.HasIndex(t => new { t.BankConnectionId, t.VariableSymbolKey })
+            .HasFilter("handling = 'unallocated'")
+            .HasDatabaseName("incoming_transactions_unallocated_symbol_idx");
     }
 }
 

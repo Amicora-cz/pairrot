@@ -24,7 +24,17 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
             t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
             t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
             t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
-            t.HasCheckConstraint("payment_requests_status_valid", "status IN ('open', 'cancelled')");
+            t.HasCheckConstraint("payment_requests_status_valid", $"status IN ({SnakeCaseEnum<PaymentRequestStatus>.SqlList})");
+
+            // Feature 009: the stored status follows from the paid amount; a cancelled request has nothing paid.
+            t.HasCheckConstraint(
+                "payment_requests_paid_consistent",
+                "(status = 'open' AND paid_amount = 0) "
+                + "OR (status = 'partially_paid' AND paid_amount > 0 AND paid_amount < amount) "
+                + "OR (status = 'paid' AND paid_amount = amount) "
+                + "OR (status = 'overpaid' AND paid_amount > amount) "
+                + "OR (status = 'cancelled' AND paid_amount = 0)");
+            t.HasCheckConstraint("payment_requests_change_sequence_valid", "change_sequence >= 0");
             t.HasCheckConstraint(
                 "payment_requests_cancellation_consistent",
                 "(status = 'cancelled' AND cancelled_at IS NOT NULL) "
@@ -46,7 +56,7 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
         builder.Property(p => p.Message).HasMaxLength(SpaydPayment.MaxMessageLength * 2);
         builder.Property(p => p.Description).HasMaxLength(PaymentRequestRules.MaxDescriptionLength);
         builder.Property(p => p.Status)
-            .HasConversion<LowercaseEnumConverter<PaymentRequestStatus>>()
+            .HasConversion<SnakeCaseEnumConverter<PaymentRequestStatus>>()
             .HasMaxLength(20);
         builder.Property(p => p.CancellationReason).HasMaxLength(PaymentRequestRules.MaxCancellationReasonLength);
         builder.Property(p => p.CreationFingerprint).HasMaxLength(64);
@@ -68,6 +78,9 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
             .HasForeignKey(p => new { p.TenantId, p.BankConnectionId })
             .HasPrincipalKey(b => new { b.TenantId, b.Id })
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Lets allocations and changes reference a request together with its owner and account.
+        builder.HasAlternateKey(p => new { p.Id, p.TenantId, p.BankConnectionId });
 
         builder.HasIndex(p => new { p.TenantId, p.ExternalId }).IsUnique().HasDatabaseName(ExternalIdUniqueIndex);
 

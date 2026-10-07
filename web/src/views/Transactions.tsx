@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type BankConnection, type IncomingTransaction, type IngestionStatus, type ListResponse, type Tenant } from '../api'
+import { api, type BankConnection, type HandlingState, type IncomingTransaction, type IngestionStatus, type ListResponse, type Tenant } from '../api'
 import { ErrorText, Section } from '../components'
-import { formatDate, formatMinorUnits, useAction } from '../util'
+import { formatDate, formatMinorUnits, useAction, words } from '../util'
+import { HandlingBadge, MatchingPanel } from './Matching'
+import { explain, ORIGIN_LABELS } from './matchingText'
 
 interface Filters {
   bank_connection_id: string
   ingestion_status: '' | IngestionStatus
+  handling_state: '' | HandlingState
   variable_symbol: string
   booked_from: string
   booked_to: string
 }
 
-const NO_FILTERS: Filters = { bank_connection_id: '', ingestion_status: '', variable_symbol: '', booked_from: '', booked_to: '' }
+const NO_FILTERS: Filters = { bank_connection_id: '', ingestion_status: '', handling_state: '', variable_symbol: '', booked_from: '', booked_to: '' }
 
 const STATUS_LABELS: Record<IngestionStatus, string> = {
   accepted: 'recorded',
@@ -19,11 +22,7 @@ const STATUS_LABELS: Record<IngestionStatus, string> = {
   disputed: 'disputed',
 }
 
-const ORIGIN_LABELS: Record<IncomingTransaction['origin_path'], string> = {
-  direct: 'directly from the bank',
-  automatic_forward: 'automatically forwarded from a registered mailbox',
-  manual_forward: 'forwarded by hand from a registered mailbox',
-}
+const HANDLING_STATES: HandlingState[] = ['unallocated', 'allocated', 'ignored', 'rejected', 'duplicate']
 
 const EVIDENCE_LABELS: Record<IncomingTransaction['evidence'], string> = {
   live: 'live bank notification',
@@ -32,10 +31,10 @@ const EVIDENCE_LABELS: Record<IncomingTransaction['evidence'], string> = {
 }
 
 /**
- * Incoming bank transactions recorded from notifications. "Bank transaction recorded" is all it
- * means: no reservation is marked paid here, and records under review or dispute are not money.
+ * Incoming bank transactions recorded from notifications and their matching (Feature 9). Money
+ * counts towards a request only through an allocation; records under review are never counted.
  */
-export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant }) {
+export function Transactions({ prefix, owner, readOnly = false }: { prefix: string; owner: Tenant; readOnly?: boolean }) {
   const basePath = `${prefix}/transactions`
   const [connections, setConnections] = useState<BankConnection[]>([])
   const [items, setItems] = useState<IncomingTransaction[]>([])
@@ -72,8 +71,8 @@ export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant 
     <>
       <Section title={`Bank transactions: ${owner.configuration.name}`}>
         <p className="muted">
-          Incoming transfers recognized in bank notifications. A recorded transaction is not yet matched to any reservation;
-          records that need review or are disputed are not counted as received money.
+          Incoming transfers recognized in bank notifications. An exact payment (account, variable symbol, full amount) pays its
+          request automatically; anything else waits here for a person. Records under review are not counted as received money.
         </p>
         <form
           className="row"
@@ -98,6 +97,17 @@ export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant 
             {Object.entries(STATUS_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.handling_state}
+            onChange={(e) => setFilters({ ...filters, handling_state: e.target.value as Filters['handling_state'] })}
+          >
+            <option value="">any handling</option>
+            {HANDLING_STATES.map((value) => (
+              <option key={value} value={value}>
+                {words(value)}
               </option>
             ))}
           </select>
@@ -132,6 +142,7 @@ export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant 
                 <th>From</th>
                 <th>Account</th>
                 <th>Status</th>
+                <th>Matching</th>
                 <th />
               </tr>
             </thead>
@@ -147,6 +158,10 @@ export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant 
                   </td>
                   <td>
                     <StatusBadges transaction={t} />
+                  </td>
+                  <td>
+                    <HandlingBadge transaction={t} />
+                    <div className="muted">{explain(t.matching?.result)}</div>
                   </td>
                   <td>
                     <button
@@ -171,7 +186,20 @@ export function Transactions({ prefix, owner }: { prefix: string; owner: Tenant 
           </button>
         )}
       </Section>
-      {open && <TransactionDetail transaction={open} />}
+      {open && (
+        <TransactionDetail
+          key={open.id}
+          transaction={open}
+          prefix={prefix}
+          accountNumber={accountOf(open.bank_connection_id)?.account_number ?? null}
+          readOnly={readOnly}
+          onChanged={(next) => {
+            // Keep the supporting messages of the detail; refresh the row.
+            setOpen({ ...next, sources: next.sources ?? open.sources })
+            setItems((current) => current.map((t) => (t.id === next.id ? next : t)))
+          }}
+        />
+      )}
     </>
   )
 }
@@ -185,7 +213,19 @@ function StatusBadges({ transaction: t }: { transaction: IncomingTransaction }) 
   )
 }
 
-function TransactionDetail({ transaction: t }: { transaction: IncomingTransaction }) {
+function TransactionDetail({
+  transaction: t,
+  prefix,
+  accountNumber,
+  readOnly,
+  onChanged,
+}: {
+  transaction: IncomingTransaction
+  prefix: string
+  accountNumber: string | null
+  readOnly: boolean
+  onChanged: (t: IncomingTransaction) => void
+}) {
   return (
     <Section title={`Bank transaction recorded: ${formatMinorUnits(t.amount, t.currency)}`}>
       <dl>
@@ -245,6 +285,7 @@ function TransactionDetail({ transaction: t }: { transaction: IncomingTransactio
           <span className="muted">Open them under Inbound emails.</span>
         </dd>
       </dl>
+      <MatchingPanel prefix={prefix} transaction={t} accountNumber={accountNumber} readOnly={readOnly} onChanged={onChanged} />
     </Section>
   )
 }

@@ -4,6 +4,7 @@ using Microsoft.Net.Http.Headers;
 using Pairrot.Api.Auth;
 using Pairrot.Api.Http;
 using Pairrot.Core.Payments;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Tenants;
 
@@ -25,13 +26,16 @@ public static class PaymentRequestEndpoints
     private static readonly HashSet<string> ImmutableFields =
     [
         "id", "tenant_id", "bank_connection_id", "external_id", "account_number", "iban", "amount", "currency",
-        "variable_symbol", "message", "status", "is_overdue", "paid_amount", "remaining_amount", "cancellation_reason",
-        "created_at", "updated_at", "cancelled_at", "version", "payment_instructions",
+        "variable_symbol", "message", "status", "is_overdue", "paid_amount", "remaining_amount", "overpaid_amount", "cancellation_reason",
+        "created_at", "updated_at", "cancelled_at", "version", "payment_instructions", "open_review_case_ids",
     ];
 
     private static readonly HashSet<string> UpdateFields = ["description", "due_at", .. ImmutableFields];
 
     private static readonly HashSet<string> CancelFields = ["reason"];
+
+    private static readonly Dictionary<string, PaymentRequestStatus> Statuses = Enum.GetValues<PaymentRequestStatus>()
+        .ToDictionary(InboundMessageResponse.Snake);
 
     /// <summary>Maps <c>/payment-requests</c> under the current tenant.</summary>
     public static void MapTenantPaymentRequests(this RouteGroupBuilder tenantGroup) =>
@@ -64,12 +68,12 @@ public static class PaymentRequestEndpoints
         PaymentRequestStatus? status = null;
         if (query.TryGetValue("status", out var statusValue))
         {
-            if (statusValue.ToString() is not ("open" or "cancelled"))
+            if (!Statuses.TryGetValue(statusValue.ToString(), out var parsedStatus))
             {
-                return ApiErrors.Validation("status must be 'open' or 'cancelled'.");
+                return ApiErrors.Validation($"status must be one of: {string.Join(", ", Statuses.Keys)}.");
             }
 
-            status = Enum.Parse<PaymentRequestStatus>(statusValue.ToString(), ignoreCase: true);
+            status = parsedStatus;
         }
 
         Guid? connectionId = null;
@@ -171,9 +175,22 @@ public static class PaymentRequestEndpoints
             : Results.Created($"{http.Request.Path}/{created.Request.Id}", response);
     }
 
+    /// <summary>The request with its payment result and any open review case about money allocated to it.</summary>
     private static async Task<IResult> GetAsync(
-        Guid id, HttpContext http, ClaimsPrincipal user, PaymentRequestService requests, CancellationToken ct) =>
-        ToResponse(http, await requests.GetAsync(user.GetTenantId(), Subtenant(http), id, ct), requests);
+        Guid id, HttpContext http, ClaimsPrincipal user, PaymentRequestService requests, PaymentMatchingService matching, CancellationToken ct)
+    {
+        var result = await requests.GetAsync(user.GetTenantId(), Subtenant(http), id, ct);
+        if (result.Error is { } failure)
+        {
+            return ApiErrors.From(failure);
+        }
+
+        SetETag(http, result.Value!);
+        return Results.Ok(PaymentRequestResponse.From(result.Value!, requests.Now()) with
+        {
+            OpenReviewCaseIds = await matching.OpenReviewCasesOfRequestAsync(result.Value!.Id, ct),
+        });
+    }
 
     private static async Task<IResult> UpdateAsync(
         Guid id, HttpContext http, ClaimsPrincipal user, PaymentRequestService requests, CancellationToken ct)

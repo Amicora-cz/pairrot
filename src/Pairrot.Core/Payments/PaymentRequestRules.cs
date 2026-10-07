@@ -134,9 +134,17 @@ public static partial class PaymentRequestRules
         return key.Length == 0 ? "0" : key;
     }
 
-    /// <summary>Overdue is computed: an open request whose due time has passed. It never changes the status.</summary>
+    /// <summary>
+    /// Overdue is computed: a request with something left to pay whose due time has passed. It
+    /// never changes the status.
+    /// </summary>
     public static bool IsOverdue(PaymentRequest request, DateTimeOffset now) =>
-        request.Status == PaymentRequestStatus.Open && request.DueAt is { } due && due < now;
+        request.Status is PaymentRequestStatus.Open or PaymentRequestStatus.PartiallyPaid
+        && request.DueAt is { } due && due < now;
+
+    /// <summary>Description and due time can change while something is still to be paid.</summary>
+    public static bool IsEditable(PaymentRequestStatus status) =>
+        status is PaymentRequestStatus.Open or PaymentRequestStatus.PartiallyPaid;
 
     /// <summary>
     /// Parses an ISO 8601 timestamp that states its offset, e.g. <c>2026-10-15T18:00:00+02:00</c>

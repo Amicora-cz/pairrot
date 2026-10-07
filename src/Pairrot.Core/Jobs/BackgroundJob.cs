@@ -54,4 +54,10 @@ public static class BackgroundJobTypes
 
     /// <summary>Parse a stored message into an incoming transaction; the target is the message.</summary>
     public const string ParseInboundMessage = "parse_inbound_message";
+
+    /// <summary>Match an incoming transaction to its payment request (Feature 009); the target is the transaction.</summary>
+    public const string MatchTransaction = "match_transaction";
+
+    /// <summary>Match the waiting transactions of a newly created payment request; the target is the request.</summary>
+    public const string MatchPaymentRequest = "match_payment_request";
 }

@@ -38,7 +38,7 @@ public class BankParsingTests(PairrotFixture fx)
         await P.Client(account.Key).GetAsync($"{Messages}/{messageId}/parse-runs").ExpectAsync(HttpStatusCode.OK);
 
     [Fact] // AC 1, 2, 6, 11
-    public async Task A_trusted_notice_records_one_transaction_and_changes_no_payment_request()
+    public async Task A_trusted_notice_records_one_transaction_and_only_matching_pays_the_request()
     {
         var account = await NewAccountAsync();
         var client = P.Client(account.Key);
@@ -80,9 +80,9 @@ public class BankParsingTests(PairrotFixture fx)
         Assert.Single(await P.TransactionsAsync(account.ConnectionId));
         Assert.Single((await RunsAsync(account, messageId))["runs"]!.AsArray());
 
-        // Recording a transaction marks no payment request paid.
-        var unchanged = await client.GetAsync($"/v1/tenant/payment-requests/{request.Str("id")}").ExpectAsync(HttpStatusCode.OK);
-        Assert.Equal(("open", 0L), (unchanged.Str("status"), unchanged["paid_amount"]!.GetValue<long>()));
+        // Parsing itself marks nothing paid; the exact match (Feature 009) does, once.
+        var paid = await client.GetAsync($"/v1/tenant/payment-requests/{request.Str("id")}").ExpectAsync(HttpStatusCode.OK);
+        Assert.Equal(("paid", 45000L), (paid.Str("status"), paid["paid_amount"]!.GetValue<long>()));
 
         // Filters.
         async Task<int> Count(string query) => (await client.GetAsync($"{Transactions}?{query}").ExpectAsync(HttpStatusCode.OK)).Items().Count;

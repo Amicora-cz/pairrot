@@ -1,7 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Pairrot.Core.Banking;
+using Pairrot.Core.Jobs;
+using Pairrot.Core.Matching;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
+using Pairrot.Infrastructure.Jobs;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 
@@ -16,7 +20,7 @@ public sealed record PaymentRequestFilter(
     bool? Overdue = null);
 
 /// <param name="Replayed">An earlier creation with the same external ID and the same input was returned.</param>
-/// <param name="Payable">Fresh payment instructions may be issued: the request is open and its connection active.</param>
+/// <param name="Payable">Fresh payment instructions may be issued: the request is open (nothing paid) and its connection active.</param>
 public sealed record CreatedPaymentRequest(PaymentRequest Request, bool Replayed, bool Payable);
 
 /// <summary>Changes requested by a PATCH; absent fields stay unchanged.</summary>
@@ -25,9 +29,10 @@ public sealed record PaymentRequestChange(Optional<string?> Description = defaul
 /// <summary>
 /// Expected payments of one tenant, scoped like <see cref="Banking.BankConnectionService"/>: the
 /// caller's tenant or, for parent management, a direct child. Creating, editing, and cancelling
-/// write an audit event in the same transaction; reads and rendering change nothing.
+/// write an audit event in the same transaction; reads and rendering change nothing. Paid amounts
+/// change only through allocations (Feature 009, <see cref="PaymentLedger"/>).
 /// </summary>
-public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
+public class PaymentRequestService(PairrotDbContext db, TenantService tenants, BackgroundJobQueue jobs, PaymentLedger ledger)
 {
     public DateTimeOffset Now() => tenants.Now();
 
@@ -65,8 +70,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
         {
             var now = Now();
             query = overdue
-                ? query.Where(p => p.Status == PaymentRequestStatus.Open && p.DueAt < now)
-                : query.Where(p => p.Status != PaymentRequestStatus.Open || p.DueAt == null || p.DueAt >= now);
+                ? query.Where(p => (p.Status == PaymentRequestStatus.Open || p.Status == PaymentRequestStatus.PartiallyPaid) && p.DueAt < now)
+                : query.Where(p => (p.Status != PaymentRequestStatus.Open && p.Status != PaymentRequestStatus.PartiallyPaid)
+                    || p.DueAt == null || p.DueAt >= now);
         }
 
         if (before is { } cursor)
@@ -184,6 +190,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
             UpdatedAt = now,
         };
         db.PaymentRequests.Add(request);
+
+        // A receipt may have arrived before the request; matching looks for it once the request is saved.
+        jobs.Add(BackgroundJobTypes.MatchPaymentRequest, request.Id, 1, BackgroundJobQueue.SystemRequester);
         tenants.AddAudit(actor, owner.Id, AuditActions.PaymentRequestCreated, new
         {
             PaymentRequestId = request.Id,
@@ -239,9 +248,15 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
             return Stale();
         }
 
-        if (request.Status != PaymentRequestStatus.Open)
+        if (request.Status == PaymentRequestStatus.Cancelled)
         {
             return ServiceError.Conflict("payment_request_cancelled", "A cancelled payment request cannot be changed.");
+        }
+
+        if (!PaymentRequestRules.IsEditable(request.Status))
+        {
+            return ServiceError.Conflict("payment_request_settled",
+                "A paid or overpaid payment request is read-only; only its allocations can be corrected.");
         }
 
         var changes = new Dictionary<string, object?>();
@@ -323,12 +338,23 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
             return Stale();
         }
 
+        // Allocations hold received money; they must be revoked first. A concurrent allocation
+        // changes the version, so the save below fails instead of cancelling a paid request.
+        if (request.PaidAmount > 0 || await db.PaymentAllocations.AnyAsync(
+                a => a.PaymentRequestId == request.Id && a.State == AllocationState.Active, ct))
+        {
+            return ServiceError.Conflict("payment_request_has_allocations",
+                "The payment request has received payments; revoke their allocations before cancelling it.");
+        }
+
         var now = Now();
+        var before = PaymentSummary.Of(request);
         request.Status = PaymentRequestStatus.Cancelled;
         request.CancellationReason = PaymentRequestRules.NormalizeText(reason);
         request.CancelledAt = now;
         request.UpdatedAt = now;
         request.Version++;
+        ledger.AddChange(request, before, PaymentChangeCause.Cancelled, null, null, null, actor);
         tenants.AddAudit(actor, owner.Id, AuditActions.PaymentRequestCancelled, new
         {
             PaymentRequestId = request.Id,
@@ -341,9 +367,11 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
             await db.SaveChangesAsync(ct);
             return request;
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException
+            || TenantService.IsUniqueViolation(ex, PaymentChangeConfiguration.SequenceUniqueIndex))
         {
-            // Another change won. If it was a cancellation too, this one has nothing left to do.
+            // Another change won (its payment change took the same sequence number). If it was a
+            // cancellation too, this one has nothing left to do.
             db.ChangeTracker.Clear();
             var current = await db.PaymentRequests.AsNoTracking().SingleAsync(p => p.Id == requestId, ct);
             return current.Status == PaymentRequestStatus.Cancelled ? current : Stale();
@@ -379,6 +407,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants)
             TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended and cannot receive payments."),
             _ when found.Request.Status == PaymentRequestStatus.Cancelled => ServiceError.Conflict(
                 "payment_request_cancelled", "The payment request is cancelled; no new payment instructions are issued for it."),
+            _ when found.Request.Status != PaymentRequestStatus.Open => ServiceError.Conflict(
+                "payment_instructions_not_available",
+                "The payment request has already received a payment; its original full-amount instructions are not issued again."),
             _ when found.ConnectionStatus == BankConnectionStatus.Archived => ServiceError.Conflict(
                 "bank_connection_archived", "The payment request's bank connection is archived; no new payment instructions are issued for it."),
             _ => found.Request,

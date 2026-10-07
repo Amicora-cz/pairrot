@@ -107,6 +107,20 @@ public class BackgroundJobQueue(PairrotDbContext db, TimeProvider time, IOptions
         }
     }
 
+    /// <summary>
+    /// Adds the next generation to the context without saving, inside the caller's transaction,
+    /// or returns the job still active for the operation.
+    /// </summary>
+    public async Task<BackgroundJob> QueueNextAsync(string type, Guid targetId, string requestedBy, CancellationToken ct)
+    {
+        var existing = await db.BackgroundJobs.AsNoTracking()
+            .Where(j => j.Type == type && j.TargetId == targetId)
+            .OrderByDescending(j => j.Generation)
+            .ToListAsync(ct);
+        return existing.FirstOrDefault(IsActive)
+            ?? Add(type, targetId, (existing.FirstOrDefault()?.Generation ?? 0) + 1, requestedBy);
+    }
+
     public static bool IsActive(BackgroundJob job) =>
         job.State is BackgroundJobState.Queued or BackgroundJobState.Running or BackgroundJobState.RetryWait;
 

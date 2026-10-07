@@ -35,6 +35,16 @@ public class PaymentRequest
     public string? Description { get; set; }
     public DateTimeOffset? DueAt { get; set; }
     public PaymentRequestStatus Status { get; set; } = PaymentRequestStatus.Open;
+
+    /// <summary>
+    /// Sum of active allocations in minor units (Feature 009). Derived from allocations and updated
+    /// in the same transaction as them; no API sets it directly.
+    /// </summary>
+    public long PaidAmount { get; set; }
+
+    /// <summary>The sequence of the latest payment change (<c>payment_request_changes</c>); 0 before any.</summary>
+    public int ChangeSequence { get; set; }
+
     public string? CancellationReason { get; set; }
 
     /// <summary>SHA-256 of the original validated creation input; compared on creation retries, never updated.</summary>
@@ -53,11 +63,51 @@ public class PaymentRequest
 }
 
 /// <summary>
-/// Stored states. Paid states come with allocations in a later feature; overdue is computed,
-/// never stored (<see cref="PaymentRequestRules.IsOverdue"/>).
+/// Stored states. Apart from <see cref="Cancelled"/>, the status follows from the paid amount
+/// (<see cref="PaymentSummary.StatusFor"/>); overdue is computed, never stored
+/// (<see cref="PaymentRequestRules.IsOverdue"/>).
 /// </summary>
 public enum PaymentRequestStatus
 {
     Open,
+    PartiallyPaid,
+    Paid,
+    Overpaid,
     Cancelled,
+}
+
+/// <summary>
+/// A request's payment result. For a cancelled request nothing is paid and nothing remains.
+/// </summary>
+/// <param name="RemainingAmount"><c>null</c> for a cancelled request.</param>
+public readonly record struct PaymentSummary(PaymentRequestStatus Status, long PaidAmount, long? RemainingAmount, long OverpaidAmount)
+{
+    public static PaymentSummary Of(PaymentRequest request) => request.Status == PaymentRequestStatus.Cancelled
+        ? new PaymentSummary(PaymentRequestStatus.Cancelled, 0, null, 0)
+        : Calculate(request.Amount, request.PaidAmount);
+
+    public static PaymentSummary Calculate(long amount, long paid) =>
+        new(StatusFor(amount, paid), paid, Math.Max(amount - paid, 0), Math.Max(paid - amount, 0));
+
+    public static PaymentRequestStatus StatusFor(long amount, long paid) => paid switch
+    {
+        0 => PaymentRequestStatus.Open,
+        _ when paid < amount => PaymentRequestStatus.PartiallyPaid,
+        _ when paid == amount => PaymentRequestStatus.Paid,
+        _ => PaymentRequestStatus.Overpaid,
+    };
+
+    /// <summary>The paid amount after adding <paramref name="delta"/>, or <c>null</c> when it would overflow or go negative.</summary>
+    public static long? Add(long paid, long delta)
+    {
+        try
+        {
+            var result = checked(paid + delta);
+            return result < 0 ? null : result;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
 }

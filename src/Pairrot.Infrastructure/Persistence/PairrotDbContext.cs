@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Pairrot.Core.Banking;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
+using Pairrot.Core.Matching;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
@@ -32,6 +33,12 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<IncomingTransaction> IncomingTransactions => Set<IncomingTransaction>();
     public DbSet<TransactionSource> TransactionSources => Set<TransactionSource>();
     public DbSet<ForwardingSource> ForwardingSources => Set<ForwardingSource>();
+    public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
+    public DbSet<PaymentChange> PaymentChanges => Set<PaymentChange>();
+    public DbSet<PaymentReviewCase> ReviewCases => Set<PaymentReviewCase>();
+    public DbSet<PaymentReviewCaseMember> ReviewCaseMembers => Set<PaymentReviewCaseMember>();
+    public DbSet<PaymentReviewDecision> ReviewDecisions => Set<PaymentReviewDecision>();
+    public DbSet<ManualCommandReceipt> CommandReceipts => Set<ManualCommandReceipt>();
 
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();

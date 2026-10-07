@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ApiError } from './api'
 
 export function formatDate(value: string | null) {
@@ -40,4 +40,22 @@ export function toMinorUnits(text: string): number | null {
 
 export function formatMinorUnits(minor: number, currency: string) {
   return `${currency} ${Math.trunc(minor / 100).toLocaleString('en-US')}.${String(minor % 100).padStart(2, '0')}`
+}
+
+/**
+ * One `Idempotency-Key` per user action: the same key is reused when the same submission is
+ * retried, and a new one is used after a success or when the input changes.
+ */
+export function useIdempotencyKey() {
+  const key = useRef<string | null>(null)
+  const current = useCallback(() => (key.current ??= crypto.randomUUID()), [])
+  const reset = useCallback(() => {
+    key.current = null
+  }, [])
+  return { current, reset }
+}
+
+/** `partially_paid` → `partially paid`; codes are shown as words. */
+export function words(code: string | null | undefined) {
+  return code ? code.replaceAll('_', ' ') : '—'
 }

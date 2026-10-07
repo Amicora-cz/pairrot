@@ -8,6 +8,7 @@ using Pairrot.Infrastructure.Banking;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Inbound.Resend;
 using Pairrot.Infrastructure.Jobs;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
@@ -102,6 +103,21 @@ public static class DependencyInjection
         services.AddScoped<BankConnectionService>();
         services.AddScoped<PaymentQrService>();
         services.AddScoped<PaymentRequestService>();
+
+        // Feature 009: matching, manual allocation, review, and the payment-change journal.
+        services.AddOptions<MatchingOptions>()
+            .Bind(configuration.GetSection(MatchingOptions.Section))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MatchingOptions>, MatchingOptionsValidator>();
+        services.AddScoped<PaymentLedger>();
+        services.AddScoped<ReviewCaseRecorder>();
+        services.AddScoped<PaymentMatcher>();
+        services.AddScoped<IBackgroundJobHandler, MatchTransactionJob>();
+        services.AddScoped<IBackgroundJobHandler, MatchPaymentRequestJob>();
+        services.AddScoped<MatchingScheduling>();
+        services.AddScoped<ManualCommands>();
+        services.AddScoped<PaymentMatchingService>();
+        services.AddScoped<ReviewCaseService>();
         return services;
     }
 
@@ -115,6 +131,7 @@ public static class DependencyInjection
             services.AddHostedService<InboundDiscoveryScheduler>();
             services.AddHostedService<MessageParseScheduler>();
             services.AddHostedService<InboundRetentionScheduler>();
+            services.AddHostedService<MatchingScheduler>();
         }
 
         return services;

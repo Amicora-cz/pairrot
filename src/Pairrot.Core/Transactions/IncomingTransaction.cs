@@ -57,8 +57,8 @@ public class MessageParseRun
 
 /// <summary>
 /// A bank movement described by accepted notifications. Recording it changes no payment request;
-/// matching and allocations are a later feature, which must ignore anything not
-/// <see cref="IngestionStatus.Accepted"/> and anything that is not live, received evidence.
+/// Feature 009 matches it: automatically only when it is <see cref="IngestionStatus.Accepted"/>,
+/// live, received evidence, and in no open review case; manually also after a review confirmed it.
 /// </summary>
 public class IncomingTransaction
 {
@@ -108,8 +108,62 @@ public class IncomingTransaction
     /// <summary>How the establishing notification arrived (Feature 008), so a later policy can tell direct and forwarded receipts apart.</summary>
     public OriginPath OriginPath { get; set; }
 
+    /// <summary>Feature 009: what has been decided about this money. Independent of the parser's <see cref="IngestionStatus"/>.</summary>
+    public TransactionHandling Handling { get; set; } = TransactionHandling.Unallocated;
+
+    /// <summary>Why it was ignored, rejected, or marked duplicate.</summary>
+    public string? HandlingReason { get; set; }
+
+    public DateTimeOffset? HandledAt { get; set; }
+    public string? HandledBy { get; set; }
+
+    /// <summary>Set by <see cref="TransactionHandling.Duplicate"/>: the record that represents the receipt.</summary>
+    public Guid? CanonicalTransactionId { get; set; }
+
+    /// <summary>A manual decision stops automatic matching until someone explicitly enables it again.</summary>
+    public bool AutoMatchBlocked { get; set; }
+
+    public string? AutoMatchBlockReason { get; set; }
+
+    /// <summary>
+    /// A review decision confirmed this receipt (<c>manual_confirmation</c>): it may be allocated
+    /// manually, never automatically. Authentication evidence is unchanged.
+    /// </summary>
+    public bool ManuallyConfirmed { get; set; }
+
+    public Guid? ConfirmationDecisionId { get; set; }
+
+    /// <summary>The latest automatic matching result, e.g. <c>matched</c> or <c>amount_mismatch</c>.</summary>
+    public string? MatchResult { get; set; }
+
+    /// <summary>The request the latest matching result refers to, if any (a suggestion, not a reservation).</summary>
+    public Guid? MatchRequestId { get; set; }
+
+    public DateTimeOffset? MatchCheckedAt { get; set; }
+
+    /// <summary>Exposed for manual writes; incremented whenever eligibility or handling changes.</summary>
+    public int Version { get; set; } = 1;
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public enum TransactionHandling
+{
+    /// <summary>Not counted towards any request (yet).</summary>
+    Unallocated,
+
+    /// <summary>Counted in full towards one request by an active allocation.</summary>
+    Allocated,
+
+    /// <summary>Unrelated to any request; excluded from matching until restored.</summary>
+    Ignored,
+
+    /// <summary>A review decided it is not a valid receipt.</summary>
+    Rejected,
+
+    /// <summary>A review decided it is another copy of <see cref="IncomingTransaction.CanonicalTransactionId"/>.</summary>
+    Duplicate,
 }
 
 public enum IngestionStatus

@@ -379,15 +379,19 @@ public sealed record PaymentRequestResponse(
     bool IsOverdue,
     long PaidAmount,
     long? RemainingAmount,
+    long OverpaidAmount,
     string? CancellationReason,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? CancelledAt,
     int Version,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Replayed = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PaymentInstructionsResponse? PaymentInstructions = null)
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PaymentInstructionsResponse? PaymentInstructions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<Guid>? OpenReviewCaseIds = null)
 {
-    public static PaymentRequestResponse From(PaymentRequest p, DateTimeOffset now) => new(
+    public static PaymentRequestResponse From(PaymentRequest p, DateTimeOffset now) => From(p, PaymentSummary.Of(p), now);
+
+    private static PaymentRequestResponse From(PaymentRequest p, PaymentSummary summary, DateTimeOffset now) => new(
         p.Id,
         p.TenantId,
         p.BankConnectionId,
@@ -402,8 +406,9 @@ public sealed record PaymentRequestResponse(
         p.DueAt,
         p.Status,
         PaymentRequestRules.IsOverdue(p, now),
-        0,
-        p.Status == PaymentRequestStatus.Open ? p.Amount : null,
+        summary.PaidAmount,
+        summary.RemainingAmount,
+        summary.OverpaidAmount,
         p.CancellationReason,
         p.CreatedAt,
         p.UpdatedAt,

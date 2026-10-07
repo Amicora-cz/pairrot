@@ -214,9 +214,123 @@ export interface ParseHistory {
 
 export type IngestionStatus = 'accepted' | 'review_required' | 'disputed'
 
+export type HandlingState = 'unallocated' | 'allocated' | 'ignored' | 'rejected' | 'duplicate'
+
+/** Feature 9: matching state of a transaction. `result` is the latest automatic attempt; a suggestion is not a reservation. */
+export interface TransactionMatching {
+  result: string | null
+  payment_request_id: string | null
+  checked_at: string | null
+  auto_matching_blocked: boolean
+  auto_matching_block_reason: string | null
+  /** A person confirmed the receipt in a review; the provider's authentication results are unchanged. */
+  manually_confirmed: boolean
+  handling_reason: string | null
+  handled_at: string | null
+  handled_by: string | null
+  canonical_transaction_id: string | null
+  allocation: Allocation | null
+  open_review_case_ids: string[]
+  allocatable: boolean
+  manual_block: string | null
+  automatic_block: string | null
+}
+
+/** The recorded link between a transaction and the request it pays, always for the full amount. Never edited, only revoked. */
+export interface Allocation {
+  id: string
+  transaction_id: string
+  payment_request_id: string
+  bank_connection_id: string
+  amount: number
+  currency: string
+  method: 'automatic' | 'manual'
+  reason: string | null
+  evidence: 'live' | 'test' | 'fixture'
+  state: 'active' | 'revoked'
+  created_by: string
+  created_at: string
+  revoked_by: string | null
+  revoked_at: string | null
+  revocation_code: string | null
+  revocation_reason: string | null
+  version: number
+}
+
+export interface PaymentSummary {
+  status: PaymentRequestStatus
+  paid_amount: number
+  remaining_amount: number | null
+  overpaid_amount: number
+}
+
+export interface AllocationOutcome {
+  allocation: Allocation
+  transaction: IncomingTransaction
+  payment_request: PaymentRequest
+}
+
+export interface MatchingCandidates {
+  transaction: IncomingTransaction
+  candidates: { payment_request: PaymentRequest; reasons: string[]; proposed: PaymentSummary | null; block: string | null }[]
+}
+
+export interface PaymentChange {
+  event_id: string
+  payment_request_id: string
+  sequence: number
+  external_id: string
+  expected_amount: number
+  currency: string
+  before: PaymentSummary
+  after: PaymentSummary
+  cause: 'automatic_allocation' | 'manual_allocation' | 'allocation_revoked' | 'transaction_review_required' | 'cancelled'
+  allocation_id: string | null
+  transaction_id: string | null
+  evidence: string | null
+  actor: string
+  created_at: string
+}
+
+export type ReviewIssue = 'unverified_candidate' | 'possible_duplicate' | 'disputed'
+export type ReviewDecision = 'confirm_payment' | 'confirm_distinct' | 'mark_duplicate' | 'keep_existing' | 'reject'
+
+export interface ReviewCase {
+  id: string
+  tenant_id: string
+  bank_connection_id: string
+  issue: ReviewIssue
+  state: 'open' | 'resolved'
+  inbound_message_id: string | null
+  reason_code: string
+  reason_message: string
+  resolution: string | null
+  created_at: string
+  updated_at: string
+  resolved_at: string | null
+  version: number
+}
+
+export interface ReviewCaseDetail {
+  case: ReviewCase
+  transactions: IncomingTransaction[]
+  parse_runs: ParseRun[]
+  decisions: {
+    id: string
+    action: string
+    reason: string
+    actor: string
+    case_version: number
+    members: { transaction_id: string; version: number }[]
+    canonical_transaction_id: string | null
+    created_transaction_id: string | null
+    created_at: string
+  }[]
+}
+
 /**
- * A bank movement recorded from notifications. Not a paid reservation: matching comes later, and
- * only `accepted` records with `live` evidence will ever count as money.
+ * A bank movement recorded from notifications. It counts as money only through an allocation
+ * (Feature 9); records under review or with test evidence never pay a request automatically.
  */
 export interface IncomingTransaction {
   id: string
@@ -238,6 +352,11 @@ export interface IncomingTransaction {
   ingestion_reasons: { code: string; message: string; parse_run_id: string | null; at: string }[]
   evidence: 'live' | 'test' | 'fixture'
   origin_path: 'direct' | 'automatic_forward' | 'manual_forward'
+  /** Feature 9: what has been decided about this money. */
+  handling_state: HandlingState
+  /** Sent back as `expected_transaction_version` / `expected_version` in manual writes. */
+  version: number
+  matching: TransactionMatching | null
   created_at: string
   updated_at: string
   /** Detail only. */
@@ -279,9 +398,11 @@ export interface PaymentQr {
   payload: string
 }
 
+export type PaymentRequestStatus = 'open' | 'partially_paid' | 'paid' | 'overpaid' | 'cancelled'
+
 /**
  * An expected payment. Payment fields are frozen at creation; only `description` and `due_at`
- * can change. `paid_amount` stays 0 until payments are matched (a later feature).
+ * can change while something is left to pay. `paid_amount` is the sum of active allocations.
  */
 export interface PaymentRequest {
   id: string
@@ -297,11 +418,14 @@ export interface PaymentRequest {
   message: string | null
   description: string | null
   due_at: string | null
-  status: 'open' | 'cancelled'
+  status: PaymentRequestStatus
   is_overdue: boolean
   paid_amount: number
   /** `null` for a cancelled request: nothing more is being asked for. */
   remaining_amount: number | null
+  overpaid_amount: number
+  /** Detail only: open review cases about money allocated to this request. */
+  open_review_case_ids?: string[]
   cancellation_reason: string | null
   created_at: string
   updated_at: string
@@ -383,6 +507,8 @@ interface SendOptions {
   silent?: boolean
   /** The record version this change is based on; a newer one makes the API answer 412. */
   ifMatch?: number
+  /** Required by manual matching and review commands; reuse it when retrying the same submission. */
+  idempotencyKey?: string
 }
 
 async function send(method: Method, path: string, body: unknown, options: SendOptions) {
@@ -392,6 +518,7 @@ async function send(method: Method, path: string, body: unknown, options: SendOp
   if (expectedTenantId) headers['X-Pairrot-Tenant-Id'] = expectedTenantId
   if (options.background) headers['X-Pairrot-Background'] = 'true'
   if (options.ifMatch !== undefined) headers['If-Match'] = `"${options.ifMatch}"`
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
 
   const response = await fetch(path, {
     method,

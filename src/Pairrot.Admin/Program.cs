@@ -6,6 +6,7 @@ using Pairrot.Core.Tenants;
 using Pairrot.Core.Inbound;
 using Pairrot.Infrastructure;
 using Pairrot.Infrastructure.Inbound;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Transactions;
@@ -65,6 +66,13 @@ const string Usage = """
       inbound sync run <instance>              Queue a recovery check now (the API's worker runs it).
       inbound sync set-from <instance> <time>  Recover from an earlier time (ISO 8601 with offset),
                                                e.g. when importing an existing receiving account.
+
+      payments sweep                           Record missing review cases and queue matching of
+                                               eligible transactions that never had a matching job
+                                               (the API also does this periodically).
+      payments check                           Verify that every paid amount equals its active
+                                               allocations and that no disputed, duplicate,
+                                               rejected, or reviewed receipt is counted.
 
     Common options:
       --root <external-id>   Root tenant for setup and keys (default: nalekci.cz)
@@ -384,6 +392,25 @@ switch (args)
     case ["inbound", "parse-pending", ..]:
         Console.WriteLine($"Queued {await services.GetRequiredService<ParseScheduling>().QueueUnparsedAsync()} message(s) for parsing.");
         return 0;
+
+    case ["payments", "sweep", ..]:
+    {
+        var (cases, queued) = await services.GetRequiredService<MatchingScheduling>().SweepAsync();
+        Console.WriteLine($"Recorded {cases} review case(s); queued {queued} transaction(s) for matching.");
+        return 0;
+    }
+
+    case ["payments", "check", ..]:
+    {
+        var problems = await services.GetRequiredService<MatchingScheduling>().CheckConsistencyAsync();
+        foreach (var problem in problems)
+        {
+            Console.WriteLine(problem);
+        }
+
+        Console.WriteLine(problems.Count == 0 ? "Payment totals and allocations are consistent." : $"{problems.Count} problem(s) found.");
+        return problems.Count == 0 ? 0 : 1;
+    }
 
     case ["inbound", "sync", "run", var instanceId, ..]:
         return Report(await discovery.RunNowAsync(instanceId, $"operator:{operatorName}"), queued => queued.Created

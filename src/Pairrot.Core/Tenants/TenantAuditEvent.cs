@@ -40,4 +40,12 @@ public static class AuditActions
     public const string PaymentRequestCreated = "payment_request.created";
     public const string PaymentRequestUpdated = "payment_request.updated";
     public const string PaymentRequestCancelled = "payment_request.cancelled";
+    public const string PaymentAllocated = "payment_allocation.created";
+    public const string PaymentAllocationRevoked = "payment_allocation.revoked";
+    public const string TransactionIgnored = "transaction.ignored";
+    public const string TransactionRestored = "transaction.restored";
+    public const string TransactionAutoMatchingEnabled = "transaction.auto_matching_enabled";
+    public const string TransactionMatchRequested = "transaction.match_requested";
+    public const string ReviewCaseResolved = "review_case.resolved";
+    public const string ReviewCaseReopened = "review_case.reopened";
 }

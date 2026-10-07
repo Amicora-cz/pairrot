@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Pairrot.Api.Auth;
 using Pairrot.Api.Http;
 using Pairrot.Core.Transactions;
+using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Transactions;
 
@@ -10,14 +11,17 @@ namespace Pairrot.Api.Endpoints;
 
 /// <summary>
 /// Incoming bank transactions recorded from notifications (Feature 007), under <c>/v1/tenant</c>
-/// and <c>/v1/subtenants/{subtenantId}</c>. Read-only: no endpoint trusts a source, merges
-/// transactions, or marks a payment paid.
+/// and <c>/v1/subtenants/{subtenantId}</c>, with their matching state (Feature 009). Reading only;
+/// matching actions are in <see cref="MatchingEndpoints"/>. No endpoint edits bank facts.
 /// </summary>
 public static class TransactionEndpoints
 {
     private const string SubtenantRouteValue = "subtenantId";
 
     private static readonly Dictionary<string, IngestionStatus> Statuses = Enum.GetValues<IngestionStatus>()
+        .ToDictionary(InboundMessageResponse.Snake);
+
+    private static readonly Dictionary<string, TransactionHandling> HandlingStates = Enum.GetValues<TransactionHandling>()
         .ToDictionary(InboundMessageResponse.Snake);
 
     public static void MapTenantTransactions(this RouteGroupBuilder tenantGroup) =>
@@ -33,7 +37,7 @@ public static class TransactionEndpoints
     }
 
     private static async Task<IResult> ListAsync(
-        HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, CancellationToken ct)
+        HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, PaymentMatchingService matching, CancellationToken ct)
     {
         var query = http.Request.Query;
         if (!Paging.TryRead(query, TenantService.DefaultPageSize, TenantService.MaxPageSize, out var limit, out var cursor, out var error))
@@ -90,20 +94,40 @@ public static class TransactionEndpoints
             filter = filter with { IngestionStatus = status };
         }
 
+        if (query.TryGetValue("handling_state", out var handlingValue))
+        {
+            if (!HandlingStates.TryGetValue(handlingValue.ToString(), out var handling))
+            {
+                return ApiErrors.Validation($"handling_state must be one of: {string.Join(", ", HandlingStates.Keys)}.");
+            }
+
+            filter = filter with { Handling = handling };
+        }
+
         var result = await transactions.ListAsync(user.GetTenantId(), Subtenant(http), filter, limit, cursor, ct);
-        return result.Error is { } failure
-            ? ApiErrors.From(failure)
-            : Results.Ok(new ListResponse<IncomingTransactionResponse>(
-                result.Value!.Items.Select(t => IncomingTransactionResponse.From(t)).ToList(), result.Value.NextCursor));
+        if (result.Error is { } failure)
+        {
+            return ApiErrors.From(failure);
+        }
+
+        var items = result.Value!.Items;
+        var described = await matching.DescribeAsync(items, ct);
+        return Results.Ok(new ListResponse<IncomingTransactionResponse>(
+            items.Select(t => IncomingTransactionResponse.From(t, described[t.Id])).ToList(), result.Value.NextCursor));
     }
 
     private static async Task<IResult> GetAsync(
-        Guid id, HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, CancellationToken ct)
+        Guid id, HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, PaymentMatchingService matching,
+        CancellationToken ct)
     {
         var result = await transactions.GetAsync(user.GetTenantId(), Subtenant(http), id, ct);
-        return result.Error is { } failure
-            ? ApiErrors.From(failure)
-            : Results.Ok(IncomingTransactionResponse.From(result.Value!.Transaction, result.Value.Sources));
+        if (result.Error is { } failure)
+        {
+            return ApiErrors.From(failure);
+        }
+
+        var view = await matching.ViewAsync(result.Value!.Transaction, ct);
+        return Results.Ok(IncomingTransactionResponse.From(view, result.Value.Sources));
     }
 
     private static bool TryGetDate(IQueryCollection query, string name, out DateOnly? value, out IResult? error)

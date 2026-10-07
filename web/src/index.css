@@ -367,3 +367,15 @@ pre.source {
   font-size: 1.25rem;
   letter-spacing: 0.1em;
 }
+
+.badge-partially_paid {
+  background: #dbeafe;
+}
+
+.badge-paid {
+  background: #b7e4c7;
+}
+
+.badge-overpaid {
+  background: #e9d5ff;
+}

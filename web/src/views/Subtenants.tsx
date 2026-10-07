@@ -7,6 +7,7 @@ import { BankSettings } from './BankSettings'
 import { ExpectedPayments } from './ExpectedPayments'
 import { History } from './History'
 import { InboundMessages } from './InboundMessages'
+import { Review } from './Review'
 import { Transactions } from './Transactions'
 
 /** Direct children of the selected root tenant. Managing a child does not make you its member. */
@@ -205,7 +206,8 @@ function ChildDetail({ child, onChanged, onDeleted }: { child: Tenant; onChanged
       <BankSettings key={child.id} basePath={`/v1/subtenants/${child.id}/bank-connections`} owner={child} readOnly={child.status !== 'active'} />
       <ExpectedPayments key={`payments-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
       <InboundMessages key={`inbound-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
-      <Transactions key={`transactions-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} />
+      <Transactions key={`transactions-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
+      <Review key={`review-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
       <History path={`/v1/subtenants/${child.id}/audit-events`} title="Subtenant history" />
     </>
   )
