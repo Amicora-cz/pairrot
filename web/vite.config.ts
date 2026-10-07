@@ -24,6 +24,8 @@ export default defineConfig(({ command }) => {
           target: process.env.PAIRROT_API_URL ?? 'https://localhost:7017',
           // The API uses the local development certificate.
           secure: false,
+          // Caddy routes by host name, so a remote target needs its own Host header.
+          changeOrigin: true,
         },
       },
     },
