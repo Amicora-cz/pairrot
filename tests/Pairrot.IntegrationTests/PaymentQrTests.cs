@@ -232,7 +232,7 @@ public class PaymentQrTests(PairrotFixture fx)
     }
 
     /// <summary>Decodes a PNG with ZXing, which shares no code with the QRCoder renderer.</summary>
-    private static string Decode(byte[] png)
+    internal static string Decode(byte[] png)
     {
         var image = ImageResult.FromMemory(png, ColorComponents.RedGreenBlue);
         var source = new RGBLuminanceSource(image.Data, image.Width, image.Height, RGBLuminanceSource.BitmapFormat.RGB24);

@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.AddSingleton<IInboundAddressProvider, StubInboundAddressProvider>();
         services.AddScoped<BankConnectionService>();
         services.AddScoped<PaymentQrService>();
+        services.AddScoped<PaymentRequestService>();
         return services;
     }
 

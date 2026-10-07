@@ -7,6 +7,12 @@ public enum ServiceErrorKind
     Conflict,
     Unauthorized,
     Forbidden,
+
+    /// <summary>The caller's <c>If-Match</c> version is not the current one.</summary>
+    PreconditionFailed,
+
+    /// <summary>The operation needs an <c>If-Match</c> version and none was sent.</summary>
+    PreconditionRequired,
 }
 
 /// <param name="Code">Stable machine-readable error code.</param>
@@ -24,6 +30,12 @@ public sealed record ServiceError(ServiceErrorKind Kind, string Code, string Mes
     public static ServiceError Conflict(string code, string message) => new(ServiceErrorKind.Conflict, code, message);
 
     public static ServiceError Forbidden(string message) => new(ServiceErrorKind.Forbidden, "forbidden", message);
+
+    public static ServiceError PreconditionFailed(string message) =>
+        new(ServiceErrorKind.PreconditionFailed, "precondition_failed", message);
+
+    public static ServiceError PreconditionRequired(string message) =>
+        new(ServiceErrorKind.PreconditionRequired, "precondition_required", message);
 }
 
 public readonly record struct ServiceResult<T>

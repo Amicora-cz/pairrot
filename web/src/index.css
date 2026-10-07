@@ -237,6 +237,20 @@ code.details {
   margin-bottom: 8px;
 }
 
+.badge-open {
+  background: #d4f2dc;
+}
+
+.badge-cancelled {
+  background: #e2e8f0;
+  color: var(--muted);
+}
+
+.badge-overdue {
+  background: #fde7c2;
+  margin-left: 4px;
+}
+
 .badge-archived {
   background: #e2e8f0;
   color: var(--muted);

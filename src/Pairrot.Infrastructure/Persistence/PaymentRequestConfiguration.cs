@@ -1,0 +1,82 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Pairrot.Core.Banking;
+using Pairrot.Core.Payments;
+using Pairrot.Core.Tenants;
+
+namespace Pairrot.Infrastructure.Persistence;
+
+// Feature 005: expected payments with frozen payment instructions.
+
+internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<PaymentRequest>
+{
+    public const string ExternalIdUniqueIndex = "payment_requests_tenant_external_id_unique";
+    public const string VariableSymbolUniqueIndex = "payment_requests_connection_variable_symbol_unique";
+
+    public void Configure(EntityTypeBuilder<PaymentRequest> builder)
+    {
+        builder.ToTable("payment_requests", t =>
+        {
+            t.HasCheckConstraint("payment_requests_external_id_not_blank", "btrim(external_id) <> ''");
+            t.HasCheckConstraint("payment_requests_amount_range",
+                $"amount BETWEEN {SpaydPayment.MinAmount} AND {SpaydPayment.MaxAmount}");
+            t.HasCheckConstraint("payment_requests_currency_valid", "currency = 'CZK'");
+            t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+            t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
+            t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
+            t.HasCheckConstraint("payment_requests_status_valid", "status IN ('open', 'cancelled')");
+            t.HasCheckConstraint(
+                "payment_requests_cancellation_consistent",
+                "(status = 'cancelled' AND cancelled_at IS NOT NULL) "
+                + "OR (status <> 'cancelled' AND cancelled_at IS NULL AND cancellation_reason IS NULL)");
+            t.HasCheckConstraint("payment_requests_fingerprint_format", "creation_fingerprint ~ '^[0-9a-f]{64}$'");
+            t.HasCheckConstraint("payment_requests_qr_format_valid", "qr_format = 'SPAYD'");
+            t.HasCheckConstraint("payment_requests_version_positive", "version >= 1");
+        });
+
+        builder.HasKey(p => p.Id);
+        builder.Property(p => p.Id).ValueGeneratedNever();
+        builder.Property(p => p.ExternalId).HasMaxLength(PaymentRequestRules.MaxExternalIdLength);
+        builder.Property(p => p.AccountNumber).HasMaxLength(30);
+        builder.Property(p => p.Iban).HasMaxLength(34);
+        builder.Property(p => p.Currency).HasMaxLength(3);
+        builder.Property(p => p.VariableSymbol).HasMaxLength(SpaydPayment.MaxVariableSymbolLength);
+        builder.Property(p => p.VariableSymbolKey).HasMaxLength(SpaydPayment.MaxVariableSymbolLength);
+        // Characters, not bytes; the payload limit is enforced when the message is validated.
+        builder.Property(p => p.Message).HasMaxLength(SpaydPayment.MaxMessageLength * 2);
+        builder.Property(p => p.Description).HasMaxLength(PaymentRequestRules.MaxDescriptionLength);
+        builder.Property(p => p.Status)
+            .HasConversion<LowercaseEnumConverter<PaymentRequestStatus>>()
+            .HasMaxLength(20);
+        builder.Property(p => p.CancellationReason).HasMaxLength(PaymentRequestRules.MaxCancellationReasonLength);
+        builder.Property(p => p.CreationFingerprint).HasMaxLength(64);
+        builder.Property(p => p.QrPayload).HasMaxLength(1000);
+        builder.Property(p => p.QrFormat).HasMaxLength(20);
+        builder.Property(p => p.QrGeneratorVersion).HasMaxLength(50);
+
+        // Of two updates based on the same version, only the first is saved.
+        builder.Property(p => p.Version).IsConcurrencyToken();
+
+        builder.HasOne<Tenant>()
+            .WithMany()
+            .HasForeignKey(p => p.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // The connection must belong to the same tenant, even if application code got it wrong.
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(p => new { p.TenantId, p.BankConnectionId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(p => new { p.TenantId, p.ExternalId }).IsUnique().HasDatabaseName(ExternalIdUniqueIndex);
+
+        // Cancelled requests keep their symbol: a late payment must still be attributable.
+        builder.HasIndex(p => new { p.BankConnectionId, p.VariableSymbolKey }).IsUnique().HasDatabaseName(VariableSymbolUniqueIndex);
+
+        // IDs are UUIDv7, so (tenant_id, id) also serves listing by creation time.
+        builder.HasIndex(p => new { p.TenantId, p.Id }).HasDatabaseName("payment_requests_tenant_idx");
+        builder.HasIndex(p => new { p.TenantId, p.Status, p.Id }).HasDatabaseName("payment_requests_tenant_status_idx");
+        builder.HasIndex(p => new { p.TenantId, p.Status, p.DueAt }).HasDatabaseName("payment_requests_tenant_due_idx");
+    }
+}

@@ -31,6 +31,8 @@ public static class ApiErrors
         ServiceErrorKind.Conflict => Result(StatusCodes.Status409Conflict, error.Code, error.Message),
         ServiceErrorKind.Unauthorized => Result(StatusCodes.Status401Unauthorized, error.Code, error.Message),
         ServiceErrorKind.Forbidden => Result(StatusCodes.Status403Forbidden, error.Code, error.Message),
+        ServiceErrorKind.PreconditionFailed => Result(StatusCodes.Status412PreconditionFailed, error.Code, error.Message),
+        ServiceErrorKind.PreconditionRequired => Result(StatusCodes.Status428PreconditionRequired, error.Code, error.Message),
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

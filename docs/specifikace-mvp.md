@@ -4,6 +4,8 @@
 
 ## 1. Cíl prvního vydání
 
+Navazující zadání: [005 — očekávané platby](./features/005-expected-payments.md), [006 — příjem e-mailů](./features/006-inbound-email-reception.md) a [007 — bankovní parser](./features/007-bank-message-parsing.md). První bankou pro parser je Česká spořitelna. Konkrétní pravidla těchto zadání upřesňují širší plán níže; samotné přijetí či rozpoznání zprávy ještě nemění stav úhrady.
+
 Zprovoznit Pairrot pro **NaLekci.cz**: NaLekci vytvoří očekávanou platbu pro konkrétního lektora nebo studio, Pairrot zpracuje bankovní oznámení, přiřadí platbu a oznámí výsledek zpět. Interní obsluha přes chráněné API vyřeší případy, které nelze rozhodnout automaticky.
 
 První vydání zahrnuje API a zpracování na pozadí. **Pro testování vznikne pouze lokální Vite + React SPA; produkční frontend se nevytváří ani nenasazuje.** NaLekci je první zákazník samostatného produktu. Stejné funkce musí později posloužit dalším zákazníkům bez úprav šitých na míru jejich rezervacím nebo registracím.

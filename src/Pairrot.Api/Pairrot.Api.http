@@ -102,6 +102,7 @@ X-Pairrot-Tenant-Id: {{tenantId}}
 
 ### Bank connections (Feature 3): the same routes exist under /v1/subtenants/{{childId}}/bank-connections.
 @connectionId = replace_with_connection_id
+@paymentRequestId = replace_with_payment_request_id
 
 POST {{https}}/v1/tenant/bank-connections
 X-XSRF-TOKEN: {{antiforgeryToken}}
@@ -147,6 +148,50 @@ Content-Type: application/json
 {
   "amount": 45000,
   "currency": "CZK"
+}
+
+### Expected payment (Feature 5). Repeating the same body returns the existing request with 200 and "replayed": true.
+POST {{host}}/v1/tenant/payment-requests
+Authorization: Bearer {{tenantKey}}
+Content-Type: application/json
+
+{
+  "bank_connection_id": "{{connectionId}}",
+  "external_id": "booking_123",
+  "amount": 45000,
+  "currency": "CZK",
+  "variable_symbol": "2026000123",
+  "message": "Yoga October",
+  "description": "Reservation booking_123",
+  "due_at": "2026-10-15T18:00:00+02:00"
+}
+
+###
+GET {{host}}/v1/tenant/payment-requests?external_id=booking_123
+Authorization: Bearer {{tenantKey}}
+
+### The ETag of GET .../{id} is the version to send in If-Match.
+PATCH {{host}}/v1/tenant/payment-requests/{{paymentRequestId}}
+Authorization: Bearer {{tenantKey}}
+If-Match: "1"
+Content-Type: application/json
+
+{
+  "due_at": "2026-10-20T18:00:00+02:00"
+}
+
+###
+GET {{host}}/v1/tenant/payment-requests/{{paymentRequestId}}/qr.png
+Authorization: Bearer {{tenantKey}}
+
+###
+POST {{host}}/v1/tenant/payment-requests/{{paymentRequestId}}/cancel
+Authorization: Bearer {{tenantKey}}
+If-Match: "2"
+Content-Type: application/json
+
+{
+  "reason": "Reservation cancelled"
 }
 
 ###

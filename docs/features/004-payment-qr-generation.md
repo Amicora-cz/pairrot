@@ -158,3 +158,5 @@ Use independent decoding and published valid examples to check the generated dat
 Persisted payment requests, external booking references, automatic variable-symbol assignment, symbol reservation, due dates, additional payment symbols, recurring payments, public payment pages, PDFs, incoming emails, payment matching, payment-status webhooks, campaigns, and production frontend deployment remain separate features.
 
 The output of Feature 004 is a usable payment payload and QR image for a configured bank account.
+
+[Feature 005](./005-expected-payments.md) saves expected payments with reservation references and reuses this generator for their instructions and images. Standalone Feature 004 calls remain stateless. For message validation, use the later [banking-app verification and implemented behavior](../verification/004-payment-qr.md), which supersedes the initial percent-encoding proposal above.

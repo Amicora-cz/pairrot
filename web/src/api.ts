@@ -82,6 +82,57 @@ export interface PaymentQr {
   payload: string
 }
 
+/**
+ * An expected payment. Payment fields are frozen at creation; only `description` and `due_at`
+ * can change. `paid_amount` stays 0 until payments are matched (a later feature).
+ */
+export interface PaymentRequest {
+  id: string
+  tenant_id: string
+  bank_connection_id: string
+  external_id: string
+  account_number: string
+  iban: string
+  /** Minor units: 45000 is CZK 450.00. */
+  amount: number
+  currency: string
+  variable_symbol: string
+  message: string | null
+  description: string | null
+  due_at: string | null
+  status: 'open' | 'cancelled'
+  is_overdue: boolean
+  paid_amount: number
+  /** `null` for a cancelled request: nothing more is being asked for. */
+  remaining_amount: number | null
+  cancellation_reason: string | null
+  created_at: string
+  updated_at: string
+  cancelled_at: string | null
+  /** Sent back in `If-Match` when editing or cancelling. */
+  version: number
+  /** Creation only. */
+  replayed?: boolean
+  /** Creation only, while the request is payable. */
+  payment_instructions?: PaymentInstructions
+}
+
+/** The instructions saved with a payment request; the payload is never regenerated. */
+export interface PaymentInstructions {
+  payment_request_id: string
+  bank_connection_id: string
+  tenant_id: string
+  account_number: string
+  iban: string
+  amount: number
+  currency: string
+  variable_symbol: string
+  message: string | null
+  format: 'SPAYD'
+  generator_version: string
+  payload: string
+}
+
 export interface ListResponse<T> {
   items: T[]
   next_cursor: string | null
@@ -130,12 +181,20 @@ const tenantAccessCodes = new Set(['tenant_context_changed', 'tenant_not_selecte
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
-async function send(method: Method, path: string, body: unknown, options: { background?: boolean; silent?: boolean }) {
+interface SendOptions {
+  background?: boolean
+  silent?: boolean
+  /** The record version this change is based on; a newer one makes the API answer 412. */
+  ifMatch?: number
+}
+
+async function send(method: Method, path: string, body: unknown, options: SendOptions) {
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (method !== 'GET' && antiforgeryToken) headers['X-XSRF-TOKEN'] = antiforgeryToken
   if (expectedTenantId) headers['X-Pairrot-Tenant-Id'] = expectedTenantId
   if (options.background) headers['X-Pairrot-Background'] = 'true'
+  if (options.ifMatch !== undefined) headers['If-Match'] = `"${options.ifMatch}"`
 
   const response = await fetch(path, {
     method,
@@ -164,16 +223,16 @@ export async function api<T>(
   method: Method,
   path: string,
   body?: unknown,
-  options: { background?: boolean; silent?: boolean } = {},
+  options: SendOptions = {},
 ): Promise<T> {
   const response = await send(method, path, body, options)
   if (response.status === 204) return undefined as T
   return (await response.json().catch(() => null)) as T
 }
 
-/** POSTs a JSON body and returns the PNG it produces; anything that is not a PNG is an error. */
-export async function apiPng(path: string, body: unknown): Promise<Blob> {
-  const response = await send('POST', path, body, {})
+/** Returns the PNG a path produces: POSTed with a JSON body, or a GET without one. Anything that is not a PNG is an error. */
+export async function apiPng(path: string, body?: unknown): Promise<Blob> {
+  const response = await send(body === undefined ? 'GET' : 'POST', path, body, {})
   if (response.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png') {
     throw new ApiError(response.status, 'unexpected_response', 'The server did not return a PNG image.')
   }

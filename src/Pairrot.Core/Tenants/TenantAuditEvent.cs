@@ -29,4 +29,7 @@ public static class AuditActions
     public const string BankConnectionLabelChanged = "bank_connection.label_changed";
     public const string BankConnectionAddressAssigned = "bank_connection.address_assigned";
     public const string BankConnectionArchived = "bank_connection.archived";
+    public const string PaymentRequestCreated = "payment_request.created";
+    public const string PaymentRequestUpdated = "payment_request.updated";
+    public const string PaymentRequestCancelled = "payment_request.cancelled";
 }

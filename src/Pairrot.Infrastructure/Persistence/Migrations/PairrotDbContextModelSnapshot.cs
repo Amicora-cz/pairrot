@@ -206,6 +206,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_bank_connections");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("ak_bank_connections_tenant_id_id");
+
                     b.HasIndex("Iban")
                         .IsUnique()
                         .HasDatabaseName("bank_connections_iban_unique");
@@ -234,6 +237,175 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("bank_connections_label_not_blank", "label IS NULL OR btrim(label) <> ''");
 
                             t.HasCheckConstraint("bank_connections_status_valid", "status IN ('active', 'archived')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Payments.PaymentRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancellation_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CreationFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("creation_fingerprint");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("description");
+
+                    b.Property<DateTimeOffset?>("DueAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("due_at");
+
+                    b.Property<string>("ExternalId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("external_id");
+
+                    b.Property<string>("Iban")
+                        .IsRequired()
+                        .HasMaxLength(34)
+                        .HasColumnType("character varying(34)")
+                        .HasColumnName("iban");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("message");
+
+                    b.Property<string>("QrFormat")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("qr_format");
+
+                    b.Property<string>("QrGeneratorVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("qr_generator_version");
+
+                    b.Property<string>("QrPayload")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("qr_payload");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VariableSymbol")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("variable_symbol");
+
+                    b.Property<string>("VariableSymbolKey")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("variable_symbol_key");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_requests");
+
+                    b.HasIndex("BankConnectionId", "VariableSymbolKey")
+                        .IsUnique()
+                        .HasDatabaseName("payment_requests_connection_variable_symbol_unique");
+
+                    b.HasIndex("TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_payment_requests_tenant_id_bank_connection_id");
+
+                    b.HasIndex("TenantId", "ExternalId")
+                        .IsUnique()
+                        .HasDatabaseName("payment_requests_tenant_external_id_unique");
+
+                    b.HasIndex("TenantId", "Id")
+                        .HasDatabaseName("payment_requests_tenant_idx");
+
+                    b.HasIndex("TenantId", "Status", "DueAt")
+                        .HasDatabaseName("payment_requests_tenant_due_idx");
+
+                    b.HasIndex("TenantId", "Status", "Id")
+                        .HasDatabaseName("payment_requests_tenant_status_idx");
+
+                    b.ToTable("payment_requests", null, t =>
+                        {
+                            t.HasCheckConstraint("payment_requests_amount_range", "amount BETWEEN 1 AND 999999999");
+
+                            t.HasCheckConstraint("payment_requests_cancellation_consistent", "(status = 'cancelled' AND cancelled_at IS NOT NULL) OR (status <> 'cancelled' AND cancelled_at IS NULL AND cancellation_reason IS NULL)");
+
+                            t.HasCheckConstraint("payment_requests_currency_valid", "currency = 'CZK'");
+
+                            t.HasCheckConstraint("payment_requests_external_id_not_blank", "btrim(external_id) <> ''");
+
+                            t.HasCheckConstraint("payment_requests_fingerprint_format", "creation_fingerprint ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+
+                            t.HasCheckConstraint("payment_requests_qr_format_valid", "qr_format = 'SPAYD'");
+
+                            t.HasCheckConstraint("payment_requests_status_valid", "status IN ('open', 'cancelled')");
+
+                            t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
+
+                            t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
+
+                            t.HasCheckConstraint("payment_requests_version_positive", "version >= 1");
                         });
                 });
 
@@ -712,6 +884,24 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_bank_connections_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Payments.PaymentRequest", b =>
+                {
+                    b.HasOne("Pairrot.Core.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_requests_tenants_tenant_id");
+
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_requests_bank_connections_tenant_id_bank_connection");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>

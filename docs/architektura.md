@@ -1,6 +1,6 @@
 # Pairrot — cílová architektura
 
-## Aktuální krok: Feature 1
+## Postup po jednotlivých funkcích
 
 Aktuální zadání je [Feature 1: tenants, subtenants, and API access](./features/001-tenants.md), se samostatným [SQL schématem](./features/001-tenants-schema.sql). Pro tento krok poběží PostgreSQL lokálně v Dockeru. Neon a Resend zatím nejsou potřeba. Lokální Vite + React SPA slouží pouze k testování API. Níže popsané produkční uspořádání zůstává cílem pro další kroky.
 
@@ -9,6 +9,14 @@ Navazující [Feature 002](./features/002-user-login-and-sessions.md) přidá p�
 [Feature 003](./features/003-bank-configuration-and-inbound-address.md) přidá nastavení bankovních účtů a vytvoření testovací adresy pro bankovní oznámení. Resend v tomto kroku nahradí jednoduchý lokální stub; skutečný příjem e-mailů a zpracování plateb přijdou později.
 
 [Feature 004](./features/004-payment-qr-generation.md) přidá generování platebních QR kódů pro uložený účet. API vrátí platební data nebo PNG, lokální SPA umožní náhled a stažení. Evidence očekávaných plateb a párování zůstávají na další kroky.
+
+Další navržené kroky:
+
+- [Feature 005](./features/005-expected-payments.md): uložené očekávané platby, reference rezervací, stavy a QR ze zachovaných údajů.
+- [Feature 006](./features/006-inbound-email-reception.md): skutečný příjem přes Resend, ověřený webhook, uložení zprávy a spolehlivé stahování obsahu na pozadí.
+- [Feature 007](./features/007-bank-message-parsing.md): zpracování notifikací České spořitelny do transakcí, ověření původu, duplicity a opakované zpracování.
+
+Pro 005–007 zůstává lokální PostgreSQL v Dockeru a lokální SPA. Feature 006 přidává skutečný Resend jako volitelně zapnutý režim vedle stubu; živé ověření potřebuje nastavenou příjmovou doménu a dostupný HTTPS webhook. Párování očekávaných plateb s transakcemi a oznámení výsledků NaLekci přijdou po těchto krocích.
 
 ## Základní uspořádání
 

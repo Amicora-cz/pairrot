@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Pairrot.Core.Banking;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
@@ -171,4 +172,89 @@ public sealed record PaymentQrResponse(
         qr.Payment.Message,
         SpaydPayment.FormatName,
         qr.Payment.Payload);
+}
+
+/// <summary>
+/// An expected payment. <c>paid_amount</c> is always 0 until payments are matched (a later
+/// feature); <c>remaining_amount</c> is <c>null</c> for a cancelled request, which asks for nothing.
+/// </summary>
+/// <param name="Replayed">Creation only: <c>true</c> when an earlier identical creation was returned.</param>
+/// <param name="PaymentInstructions">Creation only, and only while the request is payable.</param>
+public sealed record PaymentRequestResponse(
+    Guid Id,
+    Guid TenantId,
+    Guid BankConnectionId,
+    string ExternalId,
+    string AccountNumber,
+    string Iban,
+    long Amount,
+    string Currency,
+    string VariableSymbol,
+    string? Message,
+    string? Description,
+    DateTimeOffset? DueAt,
+    PaymentRequestStatus Status,
+    bool IsOverdue,
+    long PaidAmount,
+    long? RemainingAmount,
+    string? CancellationReason,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? CancelledAt,
+    int Version,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Replayed = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PaymentInstructionsResponse? PaymentInstructions = null)
+{
+    public static PaymentRequestResponse From(PaymentRequest p, DateTimeOffset now) => new(
+        p.Id,
+        p.TenantId,
+        p.BankConnectionId,
+        p.ExternalId,
+        p.AccountNumber,
+        p.Iban,
+        p.Amount,
+        p.Currency,
+        p.VariableSymbol,
+        p.Message,
+        p.Description,
+        p.DueAt,
+        p.Status,
+        PaymentRequestRules.IsOverdue(p, now),
+        0,
+        p.Status == PaymentRequestStatus.Open ? p.Amount : null,
+        p.CancellationReason,
+        p.CreatedAt,
+        p.UpdatedAt,
+        p.CancelledAt,
+        p.Version);
+}
+
+/// <summary>The payment instructions saved when the request was created; <c>payload</c> is never regenerated.</summary>
+public sealed record PaymentInstructionsResponse(
+    Guid PaymentRequestId,
+    Guid BankConnectionId,
+    Guid TenantId,
+    string AccountNumber,
+    string Iban,
+    long Amount,
+    string Currency,
+    string VariableSymbol,
+    string? Message,
+    string Format,
+    string GeneratorVersion,
+    string Payload)
+{
+    public static PaymentInstructionsResponse From(PaymentRequest p) => new(
+        p.Id,
+        p.BankConnectionId,
+        p.TenantId,
+        p.AccountNumber,
+        p.Iban,
+        p.Amount,
+        p.Currency,
+        p.VariableSymbol,
+        p.Message,
+        p.QrFormat,
+        p.QrGeneratorVersion,
+        p.QrPayload);
 }
