@@ -60,8 +60,7 @@ public class PaymentQrTests(PairrotFixture fx)
         Assert.Equal(auditBefore, await CountAuditEventsAsync(tenant.Id));
         await fx.WithDbAsync(async db =>
         {
-            var stored = await db.BankConnections.SingleAsync(b => b.TenantId == tenant.Id);
-            Assert.Null(stored.InboundAddress);
+            Assert.False(await db.InboundAddresses.AnyAsync(a => a.TenantId == tenant.Id));
         });
     }
 

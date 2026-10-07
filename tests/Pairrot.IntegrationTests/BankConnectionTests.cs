@@ -294,7 +294,7 @@ public class BankConnectionTests(PairrotFixture fx)
 
         await fx.WithDbAsync(async db =>
         {
-            Assert.Equal(1, await db.BankConnections.CountAsync(b => b.InboundAddress == address));
+            Assert.Equal(1, await db.InboundAddresses.CountAsync(a => a.Address == address));
             var archiveEvents = await db.AuditEvents.CountAsync(e =>
                 e.TargetTenantId == studio.Id && e.Action == AuditActions.BankConnectionArchived);
             Assert.Equal(2, archiveEvents); // one per connection, none for the repeat

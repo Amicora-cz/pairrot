@@ -49,7 +49,17 @@ export interface AuditEvent {
   created_at: string
 }
 
-/** `stub_created` means only that a local test address exists; no bank email is received. */
+export interface ErrorAt {
+  code: string
+  message: string
+  at: string | null
+}
+
+/**
+ * `stub_created` means only that a local test address exists; no email is delivered to it.
+ * `live_created` means a real receiving address exists, not that a bank has sent anything.
+ * `pending` and `failed` describe provider setup of a reserved address, which is not shown yet.
+ */
 export interface BankConnection {
   id: string
   tenant_id: string
@@ -58,13 +68,94 @@ export interface BankConnection {
   iban: string
   currency: string
   status: 'active' | 'archived'
+  /** Provider kind of the current address, or of the server's default instance before one is assigned. */
   email_provider: string
-  address_status: 'not_created' | 'stub_created'
+  provider_instance_id: string | null
+  address_status: 'not_created' | 'pending' | 'failed' | 'stub_created' | 'live_created'
   inbound_address: string | null
   address_created_at: string | null
+  provisioning_error: string | null
+  /** Separate facts; none proves that a bank sent the email or that a payment arrived. */
+  reception: {
+    last_message_received_at: string | null
+    last_content_stored_at: string | null
+    last_content_error: ErrorAt | null
+  }
   created_at: string
   updated_at: string
   archived_at: string | null
+  /** Address assignment only: a test address was retired for a new live one. */
+  address_replaced?: boolean
+}
+
+export type InboundHoldReason = 'address_retired' | 'bank_connection_archived' | 'tenant_not_active' | 'recipient_mismatch'
+
+/** Normalized results computed by the receiving system; `unknown` when there is no evidence. */
+export interface SenderAuthentication {
+  spf: string
+  dkim: string
+  dmarc: string
+  origin: string | null
+}
+
+/** A received email. `available` means its source is stored, not that it was parsed or matched. */
+export interface InboundMessage {
+  id: string
+  tenant_id: string
+  bank_connection_id: string
+  provider_instance_id: string
+  transport_kind: string
+  source_kind: 'received' | 'fixture'
+  environment: 'test' | 'live'
+  routing_state: 'routed'
+  hold_reason: InboundHoldReason | null
+  content_mode: 'deferred' | 'inline'
+  content_state: 'pending' | 'available' | 'failed'
+  header_from: string | null
+  envelope_sender: string | null
+  subject: string | null
+  envelope_recipients: string[]
+  recipient_evidence: string
+  received_at: string
+  content_stored_at: string | null
+  content_sha256: string | null
+  sender_authentication: SenderAuthentication
+  content_error: ErrorAt | null
+  source_available: boolean
+  created_at: string
+  updated_at: string
+  /** Detail only; none for inline content. */
+  retrievals?: {
+    id: string
+    generation: number
+    state: 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'failed'
+    attempt_count: number
+    next_attempt_at: string | null
+    last_error: ErrorAt | null
+    requested_by: string
+    created_at: string
+    completed_at: string | null
+  }[]
+}
+
+/** Stored common source. `html` is the email's HTML as text: display it escaped, never render it. */
+export interface InboundMessageSource {
+  message_id: string
+  source_kind: 'received' | 'fixture'
+  environment: 'test' | 'live'
+  header_from: string | null
+  subject: string | null
+  envelope_recipients: string[]
+  content_recipients: string[] | null
+  received_at: string
+  content_stored_at: string
+  content_sha256: string
+  text: string | null
+  html: string | null
+  headers: Record<string, unknown> | null
+  sender_authentication: SenderAuthentication
+  authentication_raw: unknown
+  attachments: unknown[] | null
 }
 
 /** Payment data for a QR code. Generating one stores nothing and does not track the payment. */

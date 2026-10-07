@@ -13,6 +13,7 @@ using Pairrot.Infrastructure.Users;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddPairrotInfrastructure(builder.Configuration);
+builder.Services.AddPairrotBackgroundWorker(builder.Configuration);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -69,5 +70,6 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapAuthEndpoints();
 app.MapTenantEndpoints();
 app.MapSubtenantEndpoints();
+app.MapWebhookEndpoints();
 
 app.Run();

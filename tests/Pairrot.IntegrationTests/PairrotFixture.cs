@@ -30,6 +30,11 @@ public sealed class PairrotFixture : IAsyncLifetime
 
     public string ConnectionString => _postgres.GetConnectionString();
 
+    private InboundHarness? _inbound;
+
+    /// <summary>A host in Resend mode with a fake Receiving API (Feature 006), created on first use.</summary>
+    public InboundHarness Inbound => _inbound ??= new InboundHarness(this);
+
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
@@ -46,6 +51,11 @@ public sealed class PairrotFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_inbound is not null)
+        {
+            await _inbound.Factory.DisposeAsync();
+        }
+
         await Factory.DisposeAsync();
         await _postgres.DisposeAsync();
     }

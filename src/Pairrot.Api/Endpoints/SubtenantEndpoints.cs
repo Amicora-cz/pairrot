@@ -33,6 +33,7 @@ public static class SubtenantEndpoints
         group.MapGet("/{id:guid}/audit-events", ListAuditEventsAsync).RequireAuthorization(PairrotClaims.Policies.Session);
         group.MapSubtenantBankConnections();
         group.MapSubtenantPaymentRequests();
+        group.MapSubtenantInboundMessages();
     }
 
     private static async Task<IResult> CreateAsync(

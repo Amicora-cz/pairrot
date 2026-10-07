@@ -2,7 +2,11 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Pairrot.Infrastructure.Banking;
+using Pairrot.Infrastructure.Inbound;
+using Pairrot.Infrastructure.Inbound.Resend;
+using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
@@ -49,18 +53,52 @@ public static class DependencyInjection
         services.AddScoped<AuthService>();
         services.AddScoped<UserAdministration>();
 
-        // Only the local stub exists until real email reception is implemented (a later feature).
+        // Provider instances come from configuration; adapters register by kind. Stub addresses by
+        // default; real reception only with an explicitly configured live instance.
         services.AddOptions<InboundEmailOptions>()
             .Bind(configuration.GetSection(InboundEmailOptions.Section))
-            .Validate(o => o.Provider == InboundEmailOptions.StubProvider,
-                $"{InboundEmailOptions.Section}:Provider must be '{InboundEmailOptions.StubProvider}'.")
-            .Validate(o => InboundEmailOptions.IsReservedTestDomain(o.Domain),
-                $"{InboundEmailOptions.Section}:Domain must be a lowercase reserved test domain such as in.pairrot.test.")
+            .PostConfigure(InboundEmailOptions.AddBuiltInStub)
             .ValidateOnStart();
-        services.AddSingleton<IInboundAddressProvider, StubInboundAddressProvider>();
+        services.AddSingleton<IValidateOptions<InboundEmailOptions>, InboundEmailOptionsValidator>();
+        services.AddSingleton<InboundProviderRegistry>();
+        services.AddSingleton<IInboundAddressProvisioner, StubAddressProvisioner>();
+        services.AddSingleton<IInboundAddressProvisioner, ResendAddressProvisioner>();
+        services.AddSingleton<ResendApi>();
+        services.AddSingleton<IInboundContentSource, ResendContentSource>();
+        services.AddSingleton<IInboundMessageDiscovery, ResendDiscovery>();
+        services.AddHttpClient(ResendApi.HttpClientName);
+        services.AddScoped<ResendWebhookAdapter>();
+
+        services.AddScoped<IInboundEmailIntake, InboundIntake>();
+        services.AddScoped<InboundRouter>();
+        services.AddScoped<InboundFetchQueue>();
+        services.AddScoped<InboundMessageService>();
+        services.AddScoped<InboundAdministration>();
+        services.AddScoped<IBackgroundJobHandler, InboundContentFetcher>();
+        services.Configure<InboundDiscoveryOptions>(configuration.GetSection(InboundDiscoveryOptions.Section));
+        services.AddScoped<InboundDiscoveryService>();
+        services.AddScoped<IBackgroundJobHandler, InboundDiscoveryJob>();
+
+        services.Configure<BackgroundJobOptions>(configuration.GetSection(BackgroundJobOptions.Section));
+        services.AddScoped<BackgroundJobQueue>();
+        services.AddScoped<BackgroundJobRunner>();
+
         services.AddScoped<BankConnectionService>();
         services.AddScoped<PaymentQrService>();
         services.AddScoped<PaymentRequestService>();
+        return services;
+    }
+
+    /// <summary>Runs due background jobs in this process unless <c>BackgroundJobs:Enabled</c> is false.</summary>
+    public static IServiceCollection AddPairrotBackgroundWorker(this IServiceCollection services, IConfiguration configuration)
+    {
+        var options = configuration.GetSection(BackgroundJobOptions.Section).Get<BackgroundJobOptions>() ?? new BackgroundJobOptions();
+        if (options.Enabled)
+        {
+            services.AddHostedService<BackgroundJobWorker>();
+            services.AddHostedService<InboundDiscoveryScheduler>();
+        }
+
         return services;
     }
 

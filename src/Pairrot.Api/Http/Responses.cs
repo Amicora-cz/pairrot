@@ -1,8 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Pairrot.Core.Banking;
+using Pairrot.Core.Inbound;
+using Pairrot.Core.Jobs;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
+using Pairrot.Infrastructure.Banking;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
@@ -109,9 +112,15 @@ public sealed record AuditEventResponse(
 }
 
 /// <param name="EmailProvider">
-/// The provider that assigned the address, or the configured one before assignment. <c>stub</c>
-/// means a local test address: no bank email is received.
+/// The provider kind of the current address (<c>stub</c>, <c>resend</c>, ...), or of the default
+/// instance before assignment. <c>stub</c> means a local test address: no email is ever delivered.
 /// </param>
+/// <param name="AddressStatus">
+/// <c>not_created</c>, <c>pending</c> or <c>failed</c> (provider setup of a reserved address),
+/// <c>stub_created</c> (test address), or <c>live_created</c>. No state claims that a bank email arrived.
+/// </param>
+/// <param name="InboundAddress">Shown only once the address is usable.</param>
+/// <param name="AddressReplaced">Address assignment only: <c>true</c> when a test address was retired for a new live one.</param>
 public sealed record BankConnectionResponse(
     Guid Id,
     Guid TenantId,
@@ -121,29 +130,194 @@ public sealed record BankConnectionResponse(
     string Currency,
     BankConnectionStatus Status,
     string EmailProvider,
-    AddressStatus AddressStatus,
+    string? ProviderInstanceId,
+    string AddressStatus,
     string? InboundAddress,
     DateTimeOffset? AddressCreatedAt,
+    string? ProvisioningError,
+    ReceptionResponse Reception,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? ArchivedAt)
+    DateTimeOffset? ArchivedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AddressReplaced = null)
 {
-    public static BankConnectionResponse From(BankConnection c, string providerName) => new(
-        c.Id,
-        c.TenantId,
-        c.Label,
-        c.AccountNumber,
-        c.Iban,
-        c.Currency,
-        c.Status,
-        c.EmailProvider ?? providerName,
-        c.AddressStatus,
-        c.InboundAddress,
-        c.AddressCreatedAt,
-        c.CreatedAt,
-        c.UpdatedAt,
-        c.ArchivedAt);
+    public static BankConnectionResponse From(BankConnectionView view, string providerName)
+    {
+        var (c, address) = (view.Connection, view.Address);
+        var ready = address?.ProvisioningState == InboundProvisioningState.Ready;
+        return new BankConnectionResponse(
+            c.Id,
+            c.TenantId,
+            c.Label,
+            c.AccountNumber,
+            c.Iban,
+            c.Currency,
+            c.Status,
+            address?.ProviderKind ?? providerName,
+            address?.ProviderInstanceId,
+            address switch
+            {
+                null => "not_created",
+                { ProvisioningState: InboundProvisioningState.Pending } => "pending",
+                { ProvisioningState: InboundProvisioningState.Failed } => "failed",
+                { Environment: InboundEnvironment.Test } => "stub_created",
+                _ => "live_created",
+            },
+            ready ? address!.Address : null,
+            ready ? address!.ReadyAt : null,
+            address?.ProvisioningError,
+            ReceptionResponse.From(view.Reception),
+            c.CreatedAt,
+            c.UpdatedAt,
+            c.ArchivedAt,
+            view.ReplacedStub);
+    }
 }
+
+/// <summary>Separate reception facts; none of them proves that a bank sent an email or that a payment arrived.</summary>
+public sealed record ReceptionResponse(
+    DateTimeOffset? LastMessageReceivedAt, DateTimeOffset? LastContentStoredAt, ErrorAtResponse? LastContentError)
+{
+    public static ReceptionResponse From(ReceptionFacts facts) => new(
+        facts.LastMessageReceivedAt,
+        facts.LastContentRetrievedAt,
+        facts.LastRetrievalErrorCode is { } code ? new ErrorAtResponse(code, facts.LastRetrievalErrorMessage ?? "", facts.LastRetrievalErrorAt) : null);
+}
+
+public sealed record ErrorAtResponse(string Code, string Message, DateTimeOffset? At);
+
+/// <summary>Normalized SPF/DKIM/DMARC results from the receiving system; <c>unknown</c> when there is no evidence.</summary>
+public sealed record SenderAuthenticationResponse(string Spf, string Dkim, string Dmarc, string? Origin);
+
+/// <param name="SourceAvailable">Whether <c>GET .../source</c> returns content.</param>
+/// <param name="Retrievals">Detail only: every retrieval job of the message, oldest first; none for inline content.</param>
+public sealed record InboundMessageResponse(
+    Guid Id,
+    Guid TenantId,
+    Guid BankConnectionId,
+    string ProviderInstanceId,
+    string TransportKind,
+    string SourceKind,
+    string Environment,
+    string RoutingState,
+    string? HoldReason,
+    string ContentMode,
+    string ContentState,
+    string? HeaderFrom,
+    string? EnvelopeSender,
+    string? Subject,
+    IReadOnlyList<string> EnvelopeRecipients,
+    string RecipientEvidence,
+    DateTimeOffset ReceivedAt,
+    DateTimeOffset? ContentStoredAt,
+    string? ContentSha256,
+    SenderAuthenticationResponse SenderAuthentication,
+    ErrorAtResponse? ContentError,
+    bool SourceAvailable,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RetrievalJobResponse>? Retrievals = null)
+{
+    public static InboundMessageResponse From(InboundMessage m, IReadOnlyList<BackgroundJob>? jobs = null) => new(
+        m.Id,
+        m.TenantId!.Value,
+        m.BankConnectionId!.Value,
+        m.ProviderInstanceId,
+        m.TransportKind,
+        Snake(m.SourceKind),
+        Snake(m.Environment),
+        Snake(m.RoutingState),
+        m.HoldReason is { } hold ? Snake(hold) : null,
+        Snake(m.ContentMode),
+        Snake(m.ContentState),
+        m.HeaderFrom,
+        m.EnvelopeSender,
+        m.Subject,
+        m.EnvelopeRecipients,
+        m.RecipientEvidence,
+        m.ReceivedAt,
+        m.ContentStoredAt,
+        m.ContentSha256,
+        new SenderAuthenticationResponse(m.SpfResult, m.DkimResult, m.DmarcResult, m.AuthenticationOrigin),
+        m.FetchErrorCode is { } code ? new ErrorAtResponse(code, m.FetchErrorMessage ?? "", m.FetchErrorAt) : null,
+        m.ContentState == InboundContentState.Available && m.HoldReason != InboundHoldReason.RecipientMismatch,
+        m.CreatedAt,
+        m.UpdatedAt,
+        jobs?.Select(RetrievalJobResponse.From).ToList());
+
+    internal static string Snake<TEnum>(TEnum value) where TEnum : struct, Enum =>
+        JsonNamingPolicy.SnakeCaseLower.ConvertName(value.ToString());
+}
+
+/// <summary>A retrieval attempt series. Lease details are internal and never returned.</summary>
+public sealed record RetrievalJobResponse(
+    Guid Id,
+    int Generation,
+    string State,
+    int AttemptCount,
+    DateTimeOffset? NextAttemptAt,
+    ErrorAtResponse? LastError,
+    string RequestedBy,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? CompletedAt)
+{
+    public static RetrievalJobResponse From(BackgroundJob job) => new(
+        job.Id,
+        job.Generation,
+        InboundMessageResponse.Snake(job.State),
+        job.AttemptCount,
+        job.State is BackgroundJobState.Queued or BackgroundJobState.RetryWait ? job.DueAt : null,
+        job.LastErrorCode is { } code ? new ErrorAtResponse(code, job.LastErrorMessage ?? "", null) : null,
+        job.RequestedBy,
+        job.CreatedAt,
+        job.CompletedAt);
+}
+
+/// <summary>
+/// The stored common source for display. Email HTML is returned as a string to be shown escaped,
+/// never rendered. The provider's raw content is not returned: it may contain signed URLs.
+/// </summary>
+public sealed record InboundMessageSourceResponse(
+    Guid MessageId,
+    string SourceKind,
+    string Environment,
+    string? HeaderFrom,
+    string? Subject,
+    IReadOnlyList<string> EnvelopeRecipients,
+    IReadOnlyList<string>? ContentRecipients,
+    DateTimeOffset ReceivedAt,
+    DateTimeOffset ContentStoredAt,
+    string ContentSha256,
+    string? Text,
+    string? Html,
+    JsonElement? Headers,
+    SenderAuthenticationResponse SenderAuthentication,
+    JsonElement? AuthenticationRaw,
+    JsonElement? Attachments)
+{
+    public static InboundMessageSourceResponse From(InboundMessage m) => new(
+        m.Id,
+        InboundMessageResponse.Snake(m.SourceKind),
+        InboundMessageResponse.Snake(m.Environment),
+        m.HeaderFrom,
+        m.Subject,
+        m.EnvelopeRecipients,
+        m.ContentRecipients,
+        m.ReceivedAt,
+        m.ContentStoredAt!.Value,
+        m.ContentSha256!,
+        m.TextBody,
+        m.HtmlBody,
+        Json(m.Headers),
+        new SenderAuthenticationResponse(m.SpfResult, m.DkimResult, m.DmarcResult, m.AuthenticationOrigin),
+        Json(m.AuthenticationRaw),
+        Json(m.Attachments));
+
+    private static JsonElement? Json(string? value) => value is null ? null : JsonSerializer.Deserialize<JsonElement>(value);
+}
+
+/// <summary>The retrieval queued by <c>retry-fetch</c>, or the one already queued.</summary>
+public sealed record QueuedRetrievalResponse(Guid JobId, string State, bool Created);
 
 /// <summary>
 /// Payment data for a QR code. The summary fields and <see cref="Payload"/> come from the same

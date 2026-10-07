@@ -23,7 +23,9 @@ public static class BankConnectionEndpoints
     private static readonly HashSet<string> ImmutableFields =
     [
         "id", "tenant_id", "account_number", "iban", "currency", "status", "email_provider",
-        "address_status", "inbound_address", "address_created_at", "created_at", "updated_at", "archived_at",
+        "provider_instance_id", "address_status", "inbound_address", "address_created_at", "provisioning_error", "reception",
+        "address_replaced", "created_at", "updated_at",
+        "archived_at",
     ];
 
     private static readonly HashSet<string> UpdateFields = ["label", .. ImmutableFields];
@@ -88,7 +90,7 @@ public static class BankConnectionEndpoints
         var result = await banks.CreateAsync(user.GetTenantId(), Subtenant(http), input, user.GetActor(), ct);
         return result.Error is { } failure
             ? ApiErrors.From(failure)
-            : Results.Created($"{http.Request.Path}/{result.Value!.Id}", BankConnectionResponse.From(result.Value, banks.ProviderName));
+            : Results.Created($"{http.Request.Path}/{result.Value!.Connection.Id}", BankConnectionResponse.From(result.Value, banks.ProviderName));
     }
 
     private static async Task<IResult> GetAsync(
@@ -182,7 +184,7 @@ public static class BankConnectionEndpoints
         return result.Error is { } failure ? (null, ApiErrors.From(failure)) : (result.Value, null);
     }
 
-    private static IResult ToResponse(ServiceResult<BankConnection> result, BankConnectionService banks) =>
+    private static IResult ToResponse(ServiceResult<BankConnectionView> result, BankConnectionService banks) =>
         result.Error is { } failure
             ? ApiErrors.From(failure)
             : Results.Ok(BankConnectionResponse.From(result.Value!, banks.ProviderName));

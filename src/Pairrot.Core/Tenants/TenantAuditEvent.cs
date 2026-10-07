@@ -28,7 +28,10 @@ public static class AuditActions
     public const string BankConnectionCreated = "bank_connection.created";
     public const string BankConnectionLabelChanged = "bank_connection.label_changed";
     public const string BankConnectionAddressAssigned = "bank_connection.address_assigned";
+    public const string BankConnectionAddressReplaced = "bank_connection.address_replaced";
     public const string BankConnectionArchived = "bank_connection.archived";
+    public const string InboundMessageFetchRetried = "inbound_message.fetch_retried";
+    public const string InboundMessageRouted = "inbound_message.routed";
     public const string PaymentRequestCreated = "payment_request.created";
     public const string PaymentRequestUpdated = "payment_request.updated";
     public const string PaymentRequestCancelled = "payment_request.cancelled";

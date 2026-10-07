@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pairrot.Core\Pairrot.Core.csproj" />
+    <ProjectReference Include="..\..\src\Pairrot.Infrastructure\Pairrot.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

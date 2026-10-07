@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Pairrot.Core.Banking;
+using Pairrot.Core.Inbound;
+using Pairrot.Core.Jobs;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Users;
@@ -20,6 +22,11 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<UserAuditEvent> UserAuditEvents => Set<UserAuditEvent>();
     public DbSet<BankConnection> BankConnections => Set<BankConnection>();
     public DbSet<PaymentRequest> PaymentRequests => Set<PaymentRequest>();
+    public DbSet<InboundAddress> InboundAddresses => Set<InboundAddress>();
+    public DbSet<InboundDeliveryReceipt> InboundDeliveryReceipts => Set<InboundDeliveryReceipt>();
+    public DbSet<InboundMessage> InboundMessages => Set<InboundMessage>();
+    public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
+    public DbSet<InboundSyncState> InboundSyncStates => Set<InboundSyncState>();
 
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();

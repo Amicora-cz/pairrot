@@ -333,3 +333,21 @@ a.button {
   color: #fff;
   text-decoration: none;
 }
+
+.badge-pending {
+  background: #dbeafe;
+}
+
+.badge + .badge {
+  margin-left: 4px;
+}
+
+pre.source {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+}

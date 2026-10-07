@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Pairrot.Core.Tenants;
+using Pairrot.Core.Inbound;
 using Pairrot.Infrastructure;
+using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Users;
@@ -37,6 +39,22 @@ const string Usage = """
       users reset-password --email <e>         Set a new password (prompted), clear any lockout,
                                                and revoke all sessions.
 
+      inbound list [--filter <f>] [--limit <n>]
+                                               List received emails. <f>: attention (default:
+                                               quarantined, failed, or held), quarantined, failed,
+                                               held, all.
+      inbound show <message-id>                Routing evidence, holds, errors, receipts, and retrievals.
+      inbound retry-routing <message-id>       Route a quarantined email again against the address
+                                               map (after fixing it). Routed emails never move.
+      inbound retry-fetch <message-id>         Queue content retrieval again, e.g. after fixing
+                                               provider credentials. The API's worker runs it.
+      inbound sync                             Recovery-check state per provider instance: last
+                                               attempt and success, covered-through, next due,
+                                               discovered messages, errors, and coverage gaps.
+      inbound sync run <instance>              Queue a recovery check now (the API's worker runs it).
+      inbound sync set-from <instance> <time>  Recover from an earlier time (ISO 8601 with offset),
+                                               e.g. when importing an existing receiving account.
+
     Common options:
       --root <external-id>   Root tenant for setup and keys (default: nalekci.cz)
       --operator <name>      Recorded in the audit log (default: current OS user)
@@ -69,6 +87,8 @@ var root = options.GetValueOrDefault("root") ?? RootTenantAdministration.NaLekci
 var operatorName = options.GetValueOrDefault("operator") ?? $"admin-cli:{Environment.UserName}";
 var admin = services.GetRequiredService<RootTenantAdministration>();
 var userAdmin = services.GetRequiredService<UserAdministration>();
+var inboundAdmin = services.GetRequiredService<InboundAdministration>();
+var discovery = services.GetRequiredService<InboundDiscoveryService>();
 
 switch (args)
 {
@@ -240,10 +260,130 @@ switch (args)
             _ => $"The password of {email} was reset and all their sessions are revoked.");
     }
 
+    case ["inbound", "list", ..]:
+    {
+        if (!Enum.TryParse<InboundAttention>(options.GetValueOrDefault("filter") ?? "attention", ignoreCase: true, out var filter)
+            || !int.TryParse(options.GetValueOrDefault("limit") ?? "50", out var limit) || limit < 1)
+        {
+            Console.Error.WriteLine("--filter must be attention, quarantined, failed, held, or all; --limit a positive number.");
+            return 1;
+        }
+
+        foreach (var m in await inboundAdmin.ListAsync(filter, limit))
+        {
+            var hold = m.HoldReason is { } reason ? $"hold:{Snake(reason)}" : "";
+            Console.WriteLine($"{m.Id}  {m.ReceivedAt:u}  {Snake(m.RoutingState),-19}  {Snake(m.ContentState),-9}  {hold,-30}  "
+                + $"{m.TenantId?.ToString() ?? "-"}  {string.Join(",", m.EnvelopeRecipients)}");
+        }
+
+        return 0;
+    }
+
+    case ["inbound", "show", var idText, ..] when Guid.TryParse(idText, out var messageId):
+    {
+        if (await inboundAdmin.GetAsync(messageId) is not { } view)
+        {
+            Console.Error.WriteLine("not_found: No such inbound message.");
+            return 1;
+        }
+
+        var m = view.Message;
+        Console.WriteLine($"Message      {m.Id} ({Snake(m.SourceKind)}; {Snake(m.Environment)}; instance {m.ProviderInstanceId}, message {m.SourceMessageId}, {Snake(m.ContentMode)} content)");
+        Console.WriteLine($"Received     {m.ReceivedAt:u}; accepted {m.CreatedAt:u}");
+        Console.WriteLine($"From         {m.HeaderFrom} (envelope {m.EnvelopeSender ?? "-"})");
+        Console.WriteLine($"Subject      {m.Subject}");
+        Console.WriteLine($"Recipients   {string.Join(", ", m.EnvelopeRecipients)} ({m.RecipientEvidence})");
+        Console.WriteLine($"Routing      {Snake(m.RoutingState)}{(m.TenantId is { } t ? $" -> tenant {t}, connection {m.BankConnectionId}" : "")}");
+        if (view.Address is { } address)
+        {
+            Console.WriteLine($"Address      {address.Address} ({address.ProviderInstanceId}, {Snake(address.Environment)}, {Snake(address.State)})");
+        }
+
+        Console.WriteLine($"Hold         {(m.HoldReason is { } hold ? Snake(hold) : "none")}");
+        Console.WriteLine($"Content      {Snake(m.ContentState)}{(m.ContentStoredAt is { } at ? $", stored {at:u}, sha256 {m.ContentSha256}" : "")}");
+        Console.WriteLine($"Sender auth  spf={m.SpfResult} dkim={m.DkimResult} dmarc={m.DmarcResult} ({m.AuthenticationOrigin ?? "no evidence"})");
+        if (m.FetchErrorCode is not null)
+        {
+            Console.WriteLine($"Last error   {m.FetchErrorCode} at {m.FetchErrorAt:u}: {m.FetchErrorMessage}");
+        }
+
+        foreach (var r in view.Receipts)
+        {
+            Console.WriteLine($"Receipt      {r.SourceDeliveryId}  {r.TransportKind} ({r.DeliveryEvidence})  {Snake(r.Outcome)}  {r.AcceptedAt:u}");
+        }
+
+        foreach (var j in view.Jobs)
+        {
+            var error = j.LastErrorCode is null ? "" : $"  {j.LastErrorCode}: {j.LastErrorMessage}";
+            Console.WriteLine($"Retrieval    #{j.Generation} {Snake(j.State)}, {j.AttemptCount} attempt(s), by {j.RequestedBy}, due {j.DueAt:u}{error}");
+        }
+
+        return 0;
+    }
+
+    case ["inbound", "retry-routing", var idText, ..] when Guid.TryParse(idText, out var messageId):
+        return Report(await inboundAdmin.RetryRoutingAsync(messageId, operatorName), m => m.RoutingState == InboundRoutingState.Routed
+            ? $"Routed to tenant {m.TenantId}, connection {m.BankConnectionId}{(m.HoldReason is { } hold ? $" (held: {Snake(hold)})" : "")}."
+            : $"Still quarantined: {Snake(m.RoutingState)}.");
+
+    case ["inbound", "retry-fetch", var idText, ..] when Guid.TryParse(idText, out var messageId):
+        return Report(await inboundAdmin.RetryFetchAsync(messageId, operatorName), queued => queued.Created
+            ? $"Queued retrieval job {queued.Job.Id} (generation {queued.Job.Generation})."
+            : $"Retrieval job {queued.Job.Id} is already {Snake(queued.Job.State)}.");
+
+    case ["inbound", "sync", "run", var instanceId, ..]:
+        return Report(await discovery.RunNowAsync(instanceId, $"operator:{operatorName}"), queued => queued.Created
+            ? $"Queued recovery check {queued.Job.Id} for {instanceId}."
+            : $"A recovery check for {instanceId} is already {Snake(queued.Job.State)} ({queued.Job.Id}).");
+
+    case ["inbound", "sync", "set-from", var instanceId, var fromText, ..]:
+    {
+        if (!Pairrot.Core.Payments.PaymentRequestRules.TryParseDueAt(fromText, out var from))
+        {
+            Console.Error.WriteLine("The time must be ISO 8601 with an offset, e.g. 2026-09-01T00:00:00+02:00.");
+            return 1;
+        }
+
+        return Report(await discovery.SetSyncFromAsync(instanceId, from),
+            state => $"{instanceId} recovers from {state.SyncFrom:u}; the next check scans from there.");
+    }
+
+    case ["inbound", "sync", ..]:
+    {
+        foreach (var (state, job) in await discovery.ListAsync())
+        {
+            Console.WriteLine($"{state.ProviderInstanceId}");
+            Console.WriteLine($"  sync from        {state.SyncFrom:u}");
+            Console.WriteLine($"  covered through  {(state.CoveredThrough is { } covered ? covered.ToString("u") : "not yet")}");
+            Console.WriteLine($"  last attempt     {state.LastAttemptAt?.ToString("u") ?? "-"}; last success {state.LastSuccessAt?.ToString("u") ?? "-"}");
+            Console.WriteLine($"  next due         {state.NextDueAt?.ToString("u") ?? "-"}");
+            Console.WriteLine($"  discovered       {state.DiscoveredCount} (last check {state.LastRunDiscoveredCount})");
+            if (state.LastErrorCode is not null)
+            {
+                Console.WriteLine($"  last error       {state.LastErrorCode}: {state.LastErrorMessage}");
+            }
+
+            if (state.CoverageGap is not null)
+            {
+                Console.WriteLine($"  coverage gap     {state.CoverageGap}");
+            }
+
+            if (job is not null)
+            {
+                Console.WriteLine($"  latest check     #{job.Generation} {Snake(job.State)}, {job.AttemptCount} attempt(s), by {job.RequestedBy}");
+            }
+        }
+
+        return 0;
+    }
+
     default:
         Console.Error.WriteLine(Usage);
         return 1;
 }
+
+static string Snake<TEnum>(TEnum value) where TEnum : struct, Enum =>
+    System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(value.ToString());
 
 // Creates the user if missing (prompting for a password) and optionally grants admin access.
 // An existing user's password is never changed.

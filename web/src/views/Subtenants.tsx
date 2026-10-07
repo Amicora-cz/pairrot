@@ -6,6 +6,7 @@ import { KeyManager } from './ApiKeys'
 import { BankSettings } from './BankSettings'
 import { ExpectedPayments } from './ExpectedPayments'
 import { History } from './History'
+import { InboundMessages } from './InboundMessages'
 
 /** Direct children of the selected root tenant. Managing a child does not make you its member. */
 export function Subtenants() {
@@ -202,6 +203,7 @@ function ChildDetail({ child, onChanged, onDeleted }: { child: Tenant; onChanged
       {/* A suspended child can be inspected but not changed; a deleted child's connections are history. */}
       <BankSettings key={child.id} basePath={`/v1/subtenants/${child.id}/bank-connections`} owner={child} readOnly={child.status !== 'active'} />
       <ExpectedPayments key={`payments-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
+      <InboundMessages key={`inbound-${child.id}`} prefix={`/v1/subtenants/${child.id}`} owner={child} readOnly={child.status !== 'active'} />
       <History path={`/v1/subtenants/${child.id}/audit-events`} title="Subtenant history" />
     </>
   )

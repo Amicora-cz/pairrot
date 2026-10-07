@@ -194,6 +194,20 @@ Content-Type: application/json
   "reason": "Reservation cancelled"
 }
 
+### Inbound email (Feature 6): messages routed to this tenant; quarantined mail is visible only in the admin CLI.
+@inboundMessageId = replace_with_inbound_message_id
+
+GET {{host}}/v1/tenant/inbound-messages?content_state=failed&hold_reason=none
+Authorization: Bearer {{tenantKey}}
+
+### Stored source (text, escaped HTML, headers, sender authentication); never fetched from the provider again.
+GET {{host}}/v1/tenant/inbound-messages/{{inboundMessageId}}/source
+Authorization: Bearer {{tenantKey}}
+
+### After a failed retrieval: 202 with the queued job, or the one already queued.
+POST {{host}}/v1/tenant/inbound-messages/{{inboundMessageId}}/retry-fetch
+Authorization: Bearer {{tenantKey}}
+
 ###
 POST {{https}}/v1/auth/logout
 X-XSRF-TOKEN: {{antiforgeryToken}}

@@ -8,6 +8,8 @@ Turn a stored incoming bank email into a normalized transaction that a later mat
 
 Use messages and persisted source content from [Feature 006](./006-inbound-email-reception.md). Store incoming transactions without changing the states of [Feature 005 payment requests](./005-expected-payments.md). Matching, allocations, manual payment corrections, and outgoing payment-status webhooks remain separate work.
 
+Parsers consume Feature 006's common message snapshot and normalized authentication evidence. They do not reference Resend DTOs, APIs, webhook headers, or provider names. The same bank profile must work when equivalent trusted source data later arrives through an SMTP server or another email service.
+
 ## 1. What this feature must distinguish
 
 | Record | Meaning |
@@ -55,10 +57,11 @@ When Feature 007 is installed, schedule previously stored eligible messages as w
 
 Define the profile's expected sender identities from actual direct-delivery samples. Require an allowed bank sender and provider-computed authentication evidence that supports the claimed origin. The initial conservative policy requires a passing DMARC result and a corresponding allowed From identity; weaker, missing, or indeterminate evidence requires review. Document any later bank-specific policy change explicitly.
 
-Resend documents that its `authentication` field contains receiving-server results separately from message headers. Use that evidence saved by Feature 006, not an `Authentication-Results` line supplied inside the email. [Resend receiving API](https://resend.com/docs/api-reference/emails/retrieve-received-email).
+Use the normalized receiving-system evidence and its provenance saved by Feature 006, not an `Authentication-Results` line supplied inside the email. Resend's adapter maps its provider-computed `authentication` results into that contract; a future SMTP adapter must establish an equally trusted receiving-server source. Missing evidence remains unknown and requires review, regardless of provider. [Resend evidence mapping reference](https://resend.com/docs/api-reference/emails/retrieve-received-email).
 
 - Personal forwarded emails, copied text, or an official bank name in the display name do not establish bank origin.
 - Local fixture messages retain a `fixture` source marker. They can demonstrate extraction in a development database but must not become live, verified bank evidence.
+- Test-environment messages remain test data even when delivered by a real service. Provider kind, test/live environment, and source authenticity are independent properties.
 - A failed origin check creates a review outcome, not an incoming transaction eligible for automatic matching.
 - The parser cannot reassign the tenant or bank connection chosen by intake.
 - Any full destination account found in the notification must agree with the saved connection. A mismatch requires review.
@@ -184,6 +187,7 @@ No allocation table, paid-amount update, or outgoing customer webhook is added b
 10. Fixture-generated records remain identifiable as test evidence and cannot masquerade as verified live bank receipts.
 11. Messages received before Feature 007 or before a payment request are processed when eligible. No expected-payment state changes and no customer webhook is sent.
 12. Record a controlled end-to-end result for a real direct Česká spořitelna notification through Feature 006, including its source-authentication evidence and extraction result. Without this, report live bank support as unverified even if fixture tests pass.
+13. Equivalent common snapshots from fake Resend and SMTP-style adapters produce the same extraction and trust decisions. No parser logic branches on provider kind; weaker evidence never gains trust just by changing the adapter name.
 
 ## 11. Completion boundary
 
