@@ -10,7 +10,7 @@ Implemented so far:
 - **Feature 4: payment QR generation** ([spec](docs/features/004-payment-qr-generation.md)): Czech QR Platba (SPAYD) payloads and PNG codes for saved accounts
 - **Feature 5: expected payments** ([spec](docs/features/005-expected-payments.md)): saved payment requests with a reservation reference, frozen payment instructions, edits, and cancellation
 - **Feature 6: inbound email reception** ([spec](docs/features/006-inbound-email-reception.md)): a provider-independent intake with Resend as the first live adapter, verified webhooks, a startup and hourly recovery check for missed webhooks, routing to bank connections, and stored source content retrieved by a background worker. Live reception through a real Resend account is not verified yet (see [below](#inbound-email))
-- **Feature 7: bank messages to incoming transactions, in progress** ([spec](docs/features/007-bank-message-parsing.md)): the bank-independent parser pipeline is implemented. It covers parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is provisional: it is built from public descriptions of the George e-mail and is not yet verified against a real notification (see [below](#bank-message-parsing))
+- **Feature 7: bank messages to incoming transactions** ([spec](docs/features/007-bank-message-parsing.md)): parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is built from a real notification received end to end (see [below](#bank-message-parsing))
 - **Feature 8: forwarded bank notifications** ([spec](docs/features/008-forwarded-bank-notifications.md)): notifications forwarded from the tenant's registered mailbox are valid. Foreign mail is never retrieved or stored, and an address that receives too much of it is paused. Real Gmail and Seznam forwarding samples are not recorded yet (see [below](#forwarded-notifications))
 
 The target architecture is described in [docs/architektura.md](docs/architektura.md) (in Czech).
@@ -253,16 +253,19 @@ Every attempt is an immutable `message_parse_runs` row. It records the source di
 
 Transactions carry `evidence` (`live`, `test`, or `fixture`) from the message's instance. Nothing in this feature changes a payment request or sends a webhook. Only `accepted` records with `live` evidence may ever be matched later.
 
-The selected bank is Česká spořitelna (`ceska_sporitelna` `0.2.0-provisional`, bank code 0800). No real notification sample has been obtained yet. The profile is therefore built only from public descriptions of George's "Informační zprávy → Příchozí platby" e-mail: the sender `ceskasporitelna@csas.cz`, the subject "Přišla platba", the opening sentence "na účet … právě dorazila platba ve výši … Kč", and an "Informace o transakci" block.
+The selected bank is Česká spořitelna (`ceska_sporitelna` `1.0.0`, bank code 0800). The profile is built from one real George notification ("Informační zprávy → Příchozí platby", received 2026-10-07 through an automatic Gmail forward). The notification is kept sanitized as `tests/Fixtures/ceska-sporitelna/incoming-transfer-with-vs.html`. The bank sends HTML only: an opening sentence "na účet ‹holder› ‹account› právě dorazila platba ve výši ‹amount› Kč", then an "Informace o transakci" block with labeled lines.
 
-- **Trust:** a `csas.cz` From address with DMARC `pass` is required.
-- **Amount and account:** they are read only from the opening sentence, never from the balance line.
-- **Other fields:** the symbol, counterparty, message, and booking date come from likely Czech labels. A missing booking date, a masked or different account, or any other doubt requires review.
-- **Debits:** "odešla platba" is classified as a debit.
-- **Bank reference:** none is assumed.
+- **Trust:** a `csas.cz` From address with DMARC `pass` is required. `csas.cz` publishes DMARC `p=reject`, and the Gmail forward kept the bank's DKIM.
+- **Direction:** "Směr platby: příchozí" marks an incoming payment and "odchozí" a debit.
+- **Amount and accounts:**
+  - The amount is "Částka v měně účtu", cross-checked with the opening sentence. The balance line is never read.
+  - The destination account is "Číslo účtu" and the sender account is "Číslo účtu protistrany".
+- **Date:** "Datum a čas platby" gives the booking date and the time (Europe/Prague).
+- **Optional fields:** "Variabilní symbol" and "Zpráva pro příjemce" are optional.
+- **Bank reference:** the notification has none, so lookalike payments are flagged, not merged.
 - **Forwarded copies:** a forward from an arbitrary mailbox is never trusted. Forwards from the tenant's registered mailbox are valid ([Forwarded notifications](#forwarded-notifications)).
 
-The unit tests use messages reconstructed from those descriptions, not real samples. Live bank support stays unverified until a real direct-delivery notification has been parsed and kept as a sanitized fixture (Feature 7 acceptance criteria 1 and 12). The pipeline tests use a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
+Only an incoming payment with VS has been seen for real. Payments without VS, debits, corrections, counterparty names, and text parts are handled by the same labels but are not yet confirmed by samples. The unit tests run the real fixture and variants derived from it. The pipeline tests use a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
 
 ### Forwarded notifications
 
