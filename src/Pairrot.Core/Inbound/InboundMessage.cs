@@ -26,6 +26,19 @@ public class InboundMessage
     /// <summary>Why bank processing is held for a routed message; <c>null</c> when it may proceed.</summary>
     public InboundHoldReason? HoldReason { get; set; }
 
+    /// <summary>
+    /// Feature 008: who the delivery metadata says sent it, decided before any content is retrieved.
+    /// <c>null</c> for messages that were never routed or were received before Feature 008.
+    /// It limits what is collected; it is not a trust decision.
+    /// </summary>
+    public InboundSenderClass? SenderClass { get; set; }
+
+    /// <summary>The From domain, kept even when everything else about a foreign message is dropped.</summary>
+    public string? SenderDomain { get; set; }
+
+    /// <summary>When this message is deleted (foreign mail metadata and forwarding confirmations); <c>null</c> to keep it.</summary>
+    public DateTimeOffset? RetainUntil { get; set; }
+
     /// <summary>Normalized delivered recipients used for routing.</summary>
     public List<string> EnvelopeRecipients { get; set; } = [];
 
@@ -139,6 +152,9 @@ public enum InboundHoldReason
 
     /// <summary>The content names different recipients than the routing evidence; the owner is not changed.</summary>
     RecipientMismatch,
+
+    /// <summary>Feature 008: the address was paused for foreign mail; only minimal metadata is kept.</summary>
+    AddressPaused,
 }
 
 /// <summary>Whether the source content is stored. Not whether it was parsed: see <see cref="InboundMessage.LatestParseOutcome"/>.</summary>
@@ -147,6 +163,25 @@ public enum InboundContentState
     Pending,
     Available,
     Failed,
+
+    /// <summary>Deliberately not retrieved or stored: foreign mail or a paused address (Feature 008).</summary>
+    Skipped,
+}
+
+/// <summary>Feature 008 sender classes, from delivery metadata only.</summary>
+public enum InboundSenderClass
+{
+    /// <summary>From matches the connection's bank profile; still subject to the parser's origin checks.</summary>
+    Bank,
+
+    /// <summary>A configured mail provider asking to confirm forwarding; shown to the tenant, never parsed.</summary>
+    ForwardingConfirmation,
+
+    /// <summary>From is a registered forwarding mailbox of the connection (a manual forward).</summary>
+    TenantForward,
+
+    /// <summary>Anything else: not retrieved, not stored beyond minimal metadata, and counted toward a pause.</summary>
+    Foreign,
 }
 
 /// <summary>An accepted transport delivery. Repeated deliveries with the same identity share a row.</summary>

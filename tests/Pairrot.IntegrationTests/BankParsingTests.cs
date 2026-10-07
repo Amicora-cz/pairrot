@@ -102,8 +102,6 @@ public class BankParsingTests(PairrotFixture fx)
         var notice = SyntheticBankProfile.Notice(ParsingHarness.Incoming(account.Bank));
         var cases = new (InboundDelivery Delivery, string Reason)[]
         {
-            (ParsingHarness.Delivery(account, notice, from: "Banka <notify@bank.pairrot-fixture.net.evil.example>"), ParseReasons.SenderNotAllowed),
-            (ParsingHarness.Delivery(account, notice, from: "Jana <jana@seznam.cz>"), ParseReasons.SenderNotAllowed),
             (ParsingHarness.Delivery(account, notice, authentication: new("pass", "pass", "fail", "smtp_receiving_server", null)), ParseReasons.DmarcNotPass),
             (ParsingHarness.Delivery(account, notice, authentication: SenderAuthentication.Unknown), ParseReasons.AuthenticationUnknown),
             // Results that are not from a receiving system, e.g. copied from a forged header, are no evidence.
@@ -118,6 +116,21 @@ public class BankParsingTests(PairrotFixture fx)
             Assert.Contains(run["reasons"]!.AsArray(), r => r!.Str("code") == reason);
             Assert.Equal(45000, run["candidate"]!["amount"]!.GetValue<long>()); // kept as a candidate for review
             Assert.Null(run["transaction_id"]);
+        }
+
+        // Spoofed bank senders and personal forwards from mailboxes that were not entered are foreign mail (Feature 008):
+        // their content is never stored, so nothing can be parsed from them.
+        foreach (var from in new[] { "Banka <notify@bank.pairrot-fixture.net.evil.example>", "Jana <jana@seznam.cz>" })
+        {
+            var accepted = await P.AcceptAsync(ParsingHarness.Delivery(account, notice, from: from));
+            await P.RunJobsAsync();
+            await P.WithDbAsync(async db =>
+            {
+                var stored = await db.InboundMessages.AsNoTracking().SingleAsync(m => m.Id == accepted.MessageId);
+                Assert.Equal((InboundSenderClass.Foreign, InboundContentState.Skipped, (string?)null), (stored.SenderClass, stored.ContentState, stored.TextBody));
+                Assert.False(await db.MessageParseRuns.AnyAsync(r => r.InboundMessageId == stored.Id));
+                return 0;
+            });
         }
 
         Assert.Empty(await P.TransactionsAsync(account.ConnectionId));

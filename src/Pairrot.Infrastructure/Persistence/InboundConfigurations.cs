@@ -35,6 +35,11 @@ internal sealed class InboundAddressConfiguration : IEntityTypeConfiguration<Inb
             t.HasCheckConstraint(
                 "inbound_addresses_retirement_consistent",
                 "(state = 'retired' AND retired_at IS NOT NULL) OR (state = 'active' AND retired_at IS NULL)");
+            t.HasCheckConstraint("inbound_addresses_processing_valid", "processing IN ('active', 'paused_foreign_mail')");
+            t.HasCheckConstraint(
+                "inbound_addresses_pause_consistent",
+                "(processing = 'paused_foreign_mail' AND paused_at IS NOT NULL) OR (processing = 'active' AND NOT operator_resume_required)");
+            t.HasCheckConstraint("inbound_addresses_resume_count_valid", "resume_count >= 0");
         });
 
         builder.HasKey(a => a.Id);
@@ -46,6 +51,7 @@ internal sealed class InboundAddressConfiguration : IEntityTypeConfiguration<Inb
         builder.Property(a => a.ProvisioningState).HasConversion<LowercaseEnumConverter<InboundProvisioningState>>().HasMaxLength(20);
         builder.Property(a => a.ProvisioningError).HasMaxLength(500);
         builder.Property(a => a.State).HasConversion<LowercaseEnumConverter<InboundAddressState>>().HasMaxLength(20);
+        builder.Property(a => a.Processing).HasConversion<SnakeCaseEnumConverter<InboundAddressProcessing>>().HasMaxLength(30);
 
         builder.HasOne<Tenant>().WithMany().HasForeignKey(a => a.TenantId).OnDelete(DeleteBehavior.Restrict);
 
@@ -138,7 +144,19 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
                 "inbound_messages_content_consistent",
                 "(content_state = 'available' AND content_sha256 IS NOT NULL AND content_stored_at IS NOT NULL) "
                 + "OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) "
-                + "OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL)");
+                + "OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL) "
+                + "OR (content_state = 'skipped' AND content_sha256 IS NULL AND content_stored_at IS NULL AND text_body IS NULL "
+                + "AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL)");
+            t.HasCheckConstraint(
+                "inbound_messages_sender_class_valid",
+                $"sender_class IS NULL OR sender_class IN ({SnakeCaseEnum<InboundSenderClass>.SqlList})");
+
+            // Feature 008: foreign mail and mail to a paused address keep only minimal metadata, and expire.
+            t.HasCheckConstraint(
+                "inbound_messages_foreign_minimal",
+                "(sender_class IS DISTINCT FROM 'foreign' AND hold_reason IS DISTINCT FROM 'address_paused') "
+                + "OR (content_state = 'skipped' AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL "
+                + "AND transport_metadata IS NULL AND retain_until IS NOT NULL)");
             t.HasCheckConstraint("inbound_messages_content_digest_format", "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'");
             t.HasCheckConstraint(
                 "inbound_messages_parse_consistent",
@@ -173,6 +191,8 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
         builder.Property(m => m.FetchErrorCode).HasMaxLength(50);
         builder.Property(m => m.FetchErrorMessage).HasMaxLength(500);
         builder.Property(m => m.LatestParseOutcome).HasConversion<SnakeCaseEnumConverter<ParseOutcome>>().HasMaxLength(30);
+        builder.Property(m => m.SenderClass).HasConversion<SnakeCaseEnumConverter<InboundSenderClass>>().HasMaxLength(30);
+        builder.Property(m => m.SenderDomain).HasMaxLength(253);
 
         // Feature 007's projection of the latest completed run; the run itself references the message with its owner.
         builder.HasOne<MessageParseRun>().WithMany().HasForeignKey(m => m.LatestParseRunId).OnDelete(DeleteBehavior.Restrict);
@@ -206,6 +226,12 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
         builder.HasIndex(m => m.RoutingState)
             .HasFilter("routing_state <> 'routed'")
             .HasDatabaseName("inbound_messages_quarantine_idx");
+        builder.HasIndex(m => new { m.InboundAddressId, m.CreatedAt })
+            .HasFilter("sender_class = 'foreign'")
+            .HasDatabaseName("inbound_messages_foreign_idx");
+        builder.HasIndex(m => m.RetainUntil)
+            .HasFilter("retain_until IS NOT NULL")
+            .HasDatabaseName("inbound_messages_retention_idx");
     }
 }
 
@@ -272,5 +298,41 @@ internal sealed class InboundSyncStateConfiguration : IEntityTypeConfiguration<I
         builder.Property<uint>("xmin").IsRowVersion();
 
         builder.HasIndex(s => s.ProviderInstanceId).IsUnique().HasDatabaseName(InstanceUniqueIndex);
+    }
+}
+
+internal sealed class ForwardingSourceConfiguration : IEntityTypeConfiguration<ForwardingSource>
+{
+    public const string AddressUniqueIndex = "forwarding_sources_connection_address_unique";
+
+    public void Configure(EntityTypeBuilder<ForwardingSource> builder)
+    {
+        builder.ToTable("forwarding_sources", t =>
+        {
+            t.HasCheckConstraint("forwarding_sources_address_normalized", "address = lower(btrim(address)) AND address LIKE '_%@_%'");
+            t.HasCheckConstraint("forwarding_sources_state_valid", $"state IN ({SnakeCaseEnum<ForwardingSourceState>.SqlList})");
+            t.HasCheckConstraint(
+                "forwarding_sources_state_consistent",
+                "(state = 'active' AND removed_at IS NULL) OR (state = 'removed' AND removed_at IS NOT NULL)");
+        });
+
+        builder.HasKey(s => s.Id);
+        builder.Property(s => s.Id).ValueGeneratedNever();
+        builder.Property(s => s.Address).HasMaxLength(EmailAddresses.MaxLength);
+        builder.Property(s => s.State).HasConversion<SnakeCaseEnumConverter<ForwardingSourceState>>().HasMaxLength(30);
+
+        // A removal and a concurrent re-registration never overwrite each other unseen.
+        builder.Property<uint>("xmin").IsRowVersion();
+
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(s => new { s.TenantId, s.BankConnectionId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(s => new { s.BankConnectionId, s.Address })
+            .IsUnique()
+            .HasFilter("state <> 'removed'")
+            .HasDatabaseName(AddressUniqueIndex);
     }
 }

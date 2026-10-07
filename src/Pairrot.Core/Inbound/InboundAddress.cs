@@ -33,6 +33,28 @@ public class InboundAddress
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? ReadyAt { get; set; }
     public DateTimeOffset? RetiredAt { get; set; }
+
+    /// <summary>
+    /// Feature 008: whether mail to the address is processed. Separate from <see cref="State"/>:
+    /// a paused address still routes to its owner, but nothing it receives is retrieved or parsed.
+    /// </summary>
+    public InboundAddressProcessing Processing { get; set; } = InboundAddressProcessing.Active;
+
+    public DateTimeOffset? PausedAt { get; set; }
+
+    /// <summary>Paused again soon after a resume: only an operator may resume it.</summary>
+    public bool OperatorResumeRequired { get; set; }
+
+    public DateTimeOffset? LastResumedAt { get; set; }
+    public int ResumeCount { get; set; }
+}
+
+public enum InboundAddressProcessing
+{
+    Active,
+
+    /// <summary>Too much foreign mail arrived, e.g. from a forwarding rule that forwards everything.</summary>
+    PausedForeignMail,
 }
 
 /// <summary>Test data stays test data, whichever provider delivered it.</summary>

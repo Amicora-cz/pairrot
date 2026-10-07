@@ -2,12 +2,14 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Pairrot.Core.Banking;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
 using Pairrot.Core.Parsing;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
+using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
@@ -25,6 +27,7 @@ public class MessageParseJob(
     PairrotDbContext db,
     BackgroundJobQueue jobs,
     BankProfileRegistry profiles,
+    IOptions<ForwardingOptions> forwarding,
     ILogger<MessageParseJob> logger) : IBackgroundJobHandler
 {
     private const int SaveAttempts = 3;
@@ -73,10 +76,19 @@ public class MessageParseJob(
             ?? throw new InvalidOperationException($"Bank connection {connection.Id} has an invalid IBAN.");
         var profile = profiles.For(account);
 
+        var sources = (await db.ForwardingSources.AsNoTracking()
+                .Where(s => s.BankConnectionId == connection.Id && s.State == ForwardingSourceState.Active)
+                .Select(s => s.Address)
+                .ToListAsync(ct))
+            .ToHashSet();
         ParseEvaluation evaluation;
         try
         {
-            evaluation = BankMessageEvaluator.Evaluate(profile, ToBankMessage(message, account, connection.Currency));
+            evaluation = BankMessageEvaluator.Evaluate(profile, ToBankMessage(message, account, connection.Currency) with
+            {
+                ForwardingSources = sources,
+                SpfVerifiedForwarderDomains = forwarding.Value.SpfVerifiedForwarderDomainSet,
+            });
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -112,7 +124,10 @@ public class MessageParseJob(
         message.Environment,
         message.ReceivedAt,
         account,
-        currency);
+        currency)
+    {
+        EnvelopeSender = message.EnvelopeSender,
+    };
 
     /// <summary>
     /// Duplicate and reprocessing rules: one movement per message; a proven bank reference links
@@ -214,6 +229,7 @@ public class MessageParseJob(
             ComparisonFingerprint = fingerprint,
             SourceKind = message.SourceKind,
             Environment = message.Environment,
+            OriginPath = evaluation.Trust?.Evidence.OriginPath ?? OriginPath.Direct,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -405,6 +421,18 @@ public static class ParseEligibility
         if (message.HoldReason is { } reason)
         {
             return new Hold("message_held", $"Bank processing of this message is held ({MessageParseJob.Snake(reason)}).");
+        }
+
+        if (message.SenderClass is InboundSenderClass.ForwardingConfirmation or InboundSenderClass.Foreign)
+        {
+            return new Hold("not_a_bank_message", "The message is not from the bank or a registered forwarding mailbox.");
+        }
+
+        var processing = await db.InboundAddresses.AsNoTracking()
+            .Where(a => a.Id == message.InboundAddressId).Select(a => a.Processing).SingleAsync(ct);
+        if (processing == InboundAddressProcessing.PausedForeignMail)
+        {
+            return new Hold("address_paused", "The address is paused because it received foreign mail; resume it first.");
         }
 
         var owner = await db.Tenants.AsNoTracking()

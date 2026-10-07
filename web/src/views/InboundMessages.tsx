@@ -26,6 +26,7 @@ const HOLD_LABELS: Record<string, string> = {
   bank_connection_archived: 'bank connection archived',
   tenant_not_active: 'tenant not active',
   recipient_mismatch: 'recipients differ from the delivery; held for review',
+  address_paused: 'address paused for foreign mail',
 }
 
 /**
@@ -184,6 +185,8 @@ function ContentState({ message: m }: { message: InboundMessage }) {
       {m.hold_reason && <span className="badge badge-suspended">held</span>}
       {m.source_kind === 'fixture' && <span className="badge">fixture</span>}
       {m.environment === 'test' && <span className="badge">test</span>}
+      {m.sender_class === 'tenant_forward' && <span className="badge">forwarded</span>}
+      {m.sender_class === 'forwarding_confirmation' && <span className="badge">forwarding confirmation</span>}
     </>
   )
 }

@@ -22,7 +22,32 @@ public sealed record BankMessage(
     InboundEnvironment Environment,
     DateTimeOffset ReceivedAt,
     CzechBankAccount Destination,
-    string Currency);
+    string Currency)
+{
+    /// <summary>The envelope sender as the receiving system reported it, if it did; its SPF result is <see cref="SenderAuthentication.Spf"/>.</summary>
+    public string? EnvelopeSender { get; init; }
+
+    /// <summary>Feature 008: registered forwarding mailboxes of the destination connection, normalized.</summary>
+    public IReadOnlySet<string> ForwardingSources { get; init; } = new HashSet<string>();
+
+    /// <summary>
+    /// Mail domains whose automatic forwards may be authenticated by SPF of the envelope sender,
+    /// enabled only after a real sample showed it works for that provider.
+    /// </summary>
+    public IReadOnlySet<string> SpfVerifiedForwarderDomains { get; init; } = new HashSet<string>();
+}
+
+/// <summary>How a notification reached Pairrot (Feature 008). Recorded on runs and transactions.</summary>
+public enum OriginPath
+{
+    Direct,
+
+    /// <summary>Redirected unchanged by a filter in the tenant's mailbox; From is still the bank.</summary>
+    AutomaticForward,
+
+    /// <summary>Forwarded by hand from the tenant's registered mailbox; the bank text is quoted in the body.</summary>
+    ManualForward,
+}
 
 public enum SourcePart
 {

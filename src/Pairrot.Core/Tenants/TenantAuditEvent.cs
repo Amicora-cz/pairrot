@@ -33,6 +33,10 @@ public static class AuditActions
     public const string InboundMessageFetchRetried = "inbound_message.fetch_retried";
     public const string InboundMessageRouted = "inbound_message.routed";
     public const string InboundMessageReprocessRequested = "inbound_message.reprocess_requested";
+    public const string InboundAddressPaused = "inbound_address.paused";
+    public const string InboundAddressResumed = "inbound_address.resumed";
+    public const string ForwardingSourceRegistered = "forwarding_source.registered";
+    public const string ForwardingSourceRemoved = "forwarding_source.removed";
     public const string PaymentRequestCreated = "payment_request.created";
     public const string PaymentRequestUpdated = "payment_request.updated";
     public const string PaymentRequestCancelled = "payment_request.cancelled";

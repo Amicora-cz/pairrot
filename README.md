@@ -11,6 +11,7 @@ Implemented so far:
 - **Feature 5: expected payments** ([spec](docs/features/005-expected-payments.md)): saved payment requests with a reservation reference, frozen payment instructions, edits, and cancellation
 - **Feature 6: inbound email reception** ([spec](docs/features/006-inbound-email-reception.md)): a provider-independent intake with Resend as the first live adapter, verified webhooks, a startup and hourly recovery check for missed webhooks, routing to bank connections, and stored source content retrieved by a background worker. Live reception through a real Resend account is not verified yet (see [below](#inbound-email))
 - **Feature 7: bank messages to incoming transactions, in progress** ([spec](docs/features/007-bank-message-parsing.md)): the bank-independent parser pipeline is implemented. It covers parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is provisional: it is built from public descriptions of the George e-mail and is not yet verified against a real notification (see [below](#bank-message-parsing))
+- **Feature 8: forwarded bank notifications** ([spec](docs/features/008-forwarded-bank-notifications.md)): notifications forwarded from the tenant's registered mailbox are valid. Foreign mail is never retrieved or stored, and an address that receives too much of it is paused. Real Gmail and Seznam forwarding samples are not recorded yet (see [below](#forwarded-notifications))
 
 The target architecture is described in [docs/architektura.md](docs/architektura.md) (in Czech).
 
@@ -152,8 +153,8 @@ If an `Authorization` header is present, only the key is checked; an invalid key
 
 | Caller | Endpoints |
 | --- | --- |
-| Tenant key, or a session with the tenant selected | `GET /v1/tenant`, `GET/PATCH /v1/tenant/configuration`, `GET/POST /v1/tenant/bank-connections`, `GET/PATCH/DELETE /v1/tenant/bank-connections/{id}`, `POST /v1/tenant/bank-connections/{id}/inbound-address`, `POST /v1/tenant/bank-connections/{id}/payment-qr` and `.../payment-qr.png`, `GET/POST /v1/tenant/payment-requests`, `GET/PATCH /v1/tenant/payment-requests/{id}`, `POST .../{id}/cancel`, `GET .../{id}/payment-instructions` and `.../{id}/qr.png`, `GET /v1/tenant/inbound-messages`, `GET .../inbound-messages/{id}`, `GET .../{id}/source`, `POST .../{id}/retry-fetch`, `GET .../{id}/parse-runs`, `POST .../{id}/reprocess`, `GET /v1/tenant/transactions`, `GET /v1/tenant/transactions/{id}` |
-| Management key, or a session of a root administrator with `can_create_subtenants` | `POST/GET /v1/subtenants`, `GET/PATCH/DELETE /v1/subtenants/{id}`, `GET/POST /v1/subtenants/{id}/api-keys`, `DELETE /v1/subtenants/{id}/api-keys/{keyId}`, and the same bank connection, payment request, and inbound message routes under `/v1/subtenants/{id}/bank-connections`, `/v1/subtenants/{id}/payment-requests`, `/v1/subtenants/{id}/inbound-messages`, and `/v1/subtenants/{id}/transactions` |
+| Tenant key, or a session with the tenant selected | `GET /v1/tenant`, `GET/PATCH /v1/tenant/configuration`, `GET/POST /v1/tenant/bank-connections`, `GET/PATCH/DELETE /v1/tenant/bank-connections/{id}`, `POST /v1/tenant/bank-connections/{id}/inbound-address`, `POST /v1/tenant/bank-connections/{id}/payment-qr` and `.../payment-qr.png`, `GET/POST /v1/tenant/payment-requests`, `GET/PATCH /v1/tenant/payment-requests/{id}`, `POST .../{id}/cancel`, `GET .../{id}/payment-instructions` and `.../{id}/qr.png`, `GET /v1/tenant/inbound-messages`, `GET .../inbound-messages/{id}`, `GET .../{id}/source`, `POST .../{id}/retry-fetch`, `GET .../{id}/parse-runs`, `POST .../{id}/reprocess`, `GET /v1/tenant/transactions`, `GET /v1/tenant/transactions/{id}`, `GET/POST .../bank-connections/{id}/forwarding-sources`, `DELETE .../forwarding-sources/{sourceId}`, `GET .../bank-connections/{id}/reception`, `POST .../inbound-address/resume` |
+| Management key, or a session of a root administrator with `can_create_subtenants` | `POST/GET /v1/subtenants`, `GET/PATCH/DELETE /v1/subtenants/{id}`, `GET/POST /v1/subtenants/{id}/api-keys`, `DELETE /v1/subtenants/{id}/api-keys/{keyId}`, and the same bank connection, payment request, and inbound message routes under `/v1/subtenants/{id}/bank-connections`, `/v1/subtenants/{id}/payment-requests`, `/v1/subtenants/{id}/inbound-messages`, `/v1/subtenants/{id}/transactions`, and the forwarding routes under `/v1/subtenants/{id}/bank-connections/{connectionId}` |
 | Provider signature (no key, no cookie) | `POST /v1/webhooks/resend/{instanceId}` and `POST /v1/webhooks/resend` |
 | Session only | `GET/POST /v1/tenant/api-keys`, `DELETE /v1/tenant/api-keys/{id}`, `GET /v1/tenant/audit-events`, `GET /v1/subtenants/{id}/audit-events` |
 | Sign-in and session | `GET /v1/auth/antiforgery`, `POST /v1/auth/login`, `GET /v1/auth/session`, `POST /v1/auth/select-tenant`, `POST /v1/auth/logout`, `POST /v1/auth/logout-all`, `POST /v1/auth/change-password` |
@@ -259,9 +260,32 @@ The selected bank is Česká spořitelna (`ceska_sporitelna` `0.2.0-provisional`
 - **Other fields:** the symbol, counterparty, message, and booking date come from likely Czech labels. A missing booking date, a masked or different account, or any other doubt requires review.
 - **Debits:** "odešla platba" is classified as a debit.
 - **Bank reference:** none is assumed.
-- **Forwarded copies:** copies forwarded from a personal mailbox are never trusted. George must send the notification directly to the Pairrot address, which ČS allows only as the main contact e-mail.
+- **Forwarded copies:** a forward from an arbitrary mailbox is never trusted. Forwards from the tenant's registered mailbox are valid ([Forwarded notifications](#forwarded-notifications)).
 
 The unit tests use messages reconstructed from those descriptions, not real samples. Live bank support stays unverified until a real direct-delivery notification has been parsed and kept as a sanitized fixture (Feature 7 acceptance criteria 1 and 12). The pipeline tests use a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
+
+### Forwarded notifications
+
+Česká spořitelna sends George's messages to one contact e-mail only, so a tenant usually keeps them in their own mailbox and forwards the payment notifications to the Pairrot address.
+
+**Forwarding mailbox.** The tenant enters the mailbox by hand at the bank connection (`POST .../bank-connections/{id}/forwarding-sources`), and it is active at once. In the MVP, Pairrot does not verify that the tenant controls the mailbox and sends no e-mail. Registration and removal are audited, and the bank's own addresses and Pairrot addresses cannot be entered.
+
+**Valid forwards.** A notification is valid, with its origin path recorded on the parse run and the transaction, when one of these holds:
+- **Automatic forward, bank still authenticated:** a filter forwards it unchanged and DMARC still passes for the bank.
+- **Automatic forward, mailbox authenticated:** the envelope sender is the registered mailbox, or its Gmail `+caf_` form, with SPF `pass`. This option is used only for domains listed in `Forwarding:SpfVerifiedForwarderDomains`, which is empty until a real sample proves it for a provider. Resend does not report the envelope sender, so over Resend only bank DMARC can authenticate an automatic forward.
+- **Manual forward:** From is the registered mailbox with DMARC `pass` for its domain. The quoted original is parsed after the forwarding separator and quoted headers are removed.
+
+A forward from a mailbox that was not entered, or one that fails these checks, requires review. Every Feature 7 content check still applies.
+
+**Sender classes.** Before any content is retrieved, each routed message is classified from its delivery metadata as `bank`, `forwarding_confirmation`, `tenant_forward`, or `foreign`:
+- **Foreign mail:** its content is never retrieved. Pairrot keeps only the sender domain, identities, and timestamps, which are deleted after 30 days. Foreign mail is hidden from the message list.
+- **Pausing:** more than 5 foreign messages in 24 hours pause the address. Paused mail is also not stored, the pause is audited, and the SPA shows a warning.
+- **Resuming and replacing:** the tenant resumes the address (`POST .../inbound-address/resume`) or gets a new one (`POST .../inbound-address`; the old address stays retired, reserved, and paused). If the address is paused again within 7 days of a resume, only an operator can resume it.
+- **Forwarding confirmations:** mail-provider forwarding confirmations (default sender `forwarding-noreply@google.com`) are shown with their code at `GET .../bank-connections/{id}/reception`. They are never parsed and are deleted after 7 days.
+
+**Setup status.** `GET .../reception` also reports the setup status, foreign-mail counts, and the latest bank notification with its path. The SPA shows all of this under each bank connection, with a Gmail and Seznam setup guide.
+
+Resend still accepts and counts every message sent to the receiving domain, because it has no inbound blocklist. `inbound volume` shows daily volume per instance.
 
 ## Administrative CLI
 
@@ -291,6 +315,9 @@ dotnet run --project src/Pairrot.Admin -- inbound sync run <instance-id>
 dotnet run --project src/Pairrot.Admin -- inbound sync set-from <instance-id> <ISO time with offset>
 dotnet run --project src/Pairrot.Admin -- inbound reprocess <message-id>
 dotnet run --project src/Pairrot.Admin -- inbound parse-pending
+dotnet run --project src/Pairrot.Admin -- inbound paused
+dotnet run --project src/Pairrot.Admin -- inbound resume <address>
+dotnet run --project src/Pairrot.Admin -- inbound volume [--days <n>]
 ```
 
 All commands accept `--operator <name>`, which is recorded in the audit log. `setup` and the `keys` commands also accept `--root <external-id>` (default `nalekci.cz`). A `<tenant>` is a tenant ID, a root external ID (`nalekci.cz`), or `root/child` (`nalekci.cz/studio_123`).
@@ -321,6 +348,8 @@ Feature 2 also gives audit events a user actor, with exactly one actor per event
 Feature 6 adds `inbound_addresses`, `inbound_delivery_receipts`, `inbound_messages`, `background_jobs`, and `inbound_sync_states`, and moves the Feature 3 address columns of `bank_connections` into `inbound_addresses` without changing any address or owner. Addresses are globally unique, retired ones included, and at most one is active per connection; an address on a reserved test domain can never be live. Messages reference their tenant, connection, and address through composite foreign keys, so an owner always matches, and an unrouted message has no owner at all. Jobs allow one active job per operation and target.
 
 Feature 7 adds `message_parse_runs` (unique per message and job generation), `incoming_transactions` (unique per connection, profile, and non-null bank reference; positive amounts in minor units; typed money, identity, and date columns), and `transaction_sources` (one per message). It also adds the latest parse run, its outcome, and the parse time to `inbound_messages`. Runs, transactions, and source links carry their tenant and connection, and every reference between them, and to the message, includes the owner. The database therefore rejects cross-tenant links, a source link whose run read another message, and a latest run that belongs to another message. There is no allocation table and no change to payment requests.
+
+Feature 8 adds `forwarding_sources` (owner-consistent reference to the connection, unique per connection and address among non-removed sources). `inbound_addresses` gains a processing state (`active`, `paused_foreign_mail`) separate from `active`/`retired`, with pause and resume times. `inbound_messages` gains the sender class, sender domain, a retention deadline, and the content state `skipped`. A check constraint guarantees that foreign or paused messages keep no subject, sender, body, headers, or raw content. `incoming_transactions` gains `origin_path`.
 
 ## Tests
 

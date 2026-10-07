@@ -89,6 +89,12 @@ public static class DependencyInjection
         services.AddScoped<ParseScheduling>();
         services.AddScoped<IncomingTransactionService>();
 
+        // Feature 008: forwarded notifications and foreign-mail screening.
+        services.Configure<ForwardingOptions>(configuration.GetSection(ForwardingOptions.Section));
+        services.AddScoped<SenderScreening>();
+        services.AddScoped<InboundRetention>();
+        services.AddScoped<ForwardingService>();
+
         services.Configure<BackgroundJobOptions>(configuration.GetSection(BackgroundJobOptions.Section));
         services.AddScoped<BackgroundJobQueue>();
         services.AddScoped<BackgroundJobRunner>();
@@ -108,6 +114,7 @@ public static class DependencyInjection
             services.AddHostedService<BackgroundJobWorker>();
             services.AddHostedService<InboundDiscoveryScheduler>();
             services.AddHostedService<MessageParseScheduler>();
+            services.AddHostedService<InboundRetentionScheduler>();
         }
 
         return services;

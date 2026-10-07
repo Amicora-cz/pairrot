@@ -31,6 +31,7 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<MessageParseRun> MessageParseRuns => Set<MessageParseRun>();
     public DbSet<IncomingTransaction> IncomingTransactions => Set<IncomingTransaction>();
     public DbSet<TransactionSource> TransactionSources => Set<TransactionSource>();
+    public DbSet<ForwardingSource> ForwardingSources => Set<ForwardingSource>();
 
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();

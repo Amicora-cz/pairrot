@@ -87,6 +87,7 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
                 $"ingestion_status IN ({SnakeCaseEnum<IngestionStatus>.SqlList})");
             t.HasCheckConstraint("incoming_transactions_source_kind_valid", "source_kind IN ('received', 'fixture')");
             t.HasCheckConstraint("incoming_transactions_environment_valid", "environment IN ('test', 'live')");
+            t.HasCheckConstraint("incoming_transactions_origin_path_valid", $"origin_path IN ({SnakeCaseEnum<OriginPath>.SqlList})");
             t.HasCheckConstraint("incoming_transactions_fingerprint_format", "comparison_fingerprint ~ '^[0-9a-f]{64}$'");
         });
 
@@ -106,6 +107,7 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
         builder.Property(t => t.ComparisonFingerprint).HasMaxLength(64);
         builder.Property(t => t.SourceKind).HasConversion<LowercaseEnumConverter<InboundSourceKind>>().HasMaxLength(20);
         builder.Property(t => t.Environment).HasConversion<LowercaseEnumConverter<InboundEnvironment>>().HasMaxLength(10);
+        builder.Property(t => t.OriginPath).HasConversion<SnakeCaseEnumConverter<OriginPath>>().HasMaxLength(30);
 
         // Status changes from concurrent runs never overwrite each other unseen.
         builder.Property<uint>("xmin").IsRowVersion();

@@ -52,6 +52,7 @@ public static class ParseReasons
     public const string NoVerifiedSenders = "no_verified_senders";
     public const string AuthenticationUnknown = "authentication_unknown";
     public const string DmarcNotPass = "dmarc_not_pass";
+    public const string ForwarderNotAuthenticated = "forwarder_not_authenticated";
 
     public const string AmountMissing = "amount_missing";
     public const string AmountInvalid = "amount_invalid";
@@ -181,6 +182,12 @@ public static class BankMessageEvaluator
             var content = part == SourcePart.Text
                 ? message.Text is { } text ? HtmlText.Lines(text) : null
                 : message.Html is { } html ? HtmlText.ToText(html) : null;
+            if (content is not null && trust.Evidence.OriginPath == OriginPath.ManualForward)
+            {
+                // A manual forward quotes the bank's notification, often with "> " markers.
+                content = HtmlText.Unquote(content);
+            }
+
             if (!string.IsNullOrEmpty(content))
             {
                 matches.Add((part, profile.Recognize(content, part, message.Subject)));

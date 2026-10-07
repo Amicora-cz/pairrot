@@ -51,6 +51,7 @@ public static class BankConnectionEndpoints
         group.MapPost("/{id:guid}/inbound-address", AssignAddressAsync);
         group.MapPost("/{id:guid}/payment-qr", PaymentQrAsync);
         group.MapPost("/{id:guid}/payment-qr.png", PaymentQrPngAsync);
+        group.MapForwarding();
     }
 
     private static async Task<IResult> ListAsync(

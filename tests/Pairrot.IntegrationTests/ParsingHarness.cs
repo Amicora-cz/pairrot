@@ -26,6 +26,9 @@ public sealed class ParsingHarness
     public const string SmtpInstanceId = "smtp-like";
     public const string SmtpDomain = "smtp.pairrot-fixture.net";
 
+    /// <summary>A mail provider whose automatic forwards are authenticated by SPF in these tests.</summary>
+    public const string VerifiedForwarderDomain = "mail.pairrot-fixture.net";
+
     public static readonly SenderAuthentication SmtpPassing =
         new("pass", "pass", "pass", "smtp_receiving_server", """{"spf":"pass","dkim":"pass","dmarc":"pass"}""");
 
@@ -41,6 +44,7 @@ public sealed class ParsingHarness
             builder.UseSetting($"{prefix}:Environment", "live");
             builder.UseSetting($"{prefix}:SourceKind", "received");
             builder.UseSetting($"{prefix}:Domain", SmtpDomain);
+            builder.UseSetting("Forwarding:SpfVerifiedForwarderDomains:0", VerifiedForwarderDomain);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IBankProfile>();

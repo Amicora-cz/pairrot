@@ -53,6 +53,12 @@ const string Usage = """
                                                e.g. after a parser fix or after reactivation.
       inbound parse-pending                    Queue parsing of every eligible stored message that
                                                was never parsed (the API also does this periodically).
+      inbound paused                           Addresses paused for foreign mail (Feature 8), with
+                                               their foreign messages in the current window.
+      inbound resume <address>                 Resume a paused address, also one that only an
+                                               operator may resume.
+      inbound volume [--days <n>]              Received messages per provider instance and day,
+                                               foreign mail separately (default 7 days).
       inbound sync                             Recovery-check state per provider instance: last
                                                attempt and success, covered-through, next due,
                                                discovered messages, errors, and coverage gaps.
@@ -95,6 +101,7 @@ var userAdmin = services.GetRequiredService<UserAdministration>();
 var inboundAdmin = services.GetRequiredService<InboundAdministration>();
 var discovery = services.GetRequiredService<InboundDiscoveryService>();
 var transactions = services.GetRequiredService<IncomingTransactionService>();
+var forwarding = services.GetRequiredService<ForwardingService>();
 
 switch (args)
 {
@@ -306,6 +313,7 @@ switch (args)
         }
 
         Console.WriteLine($"Hold         {(m.HoldReason is { } hold ? Snake(hold) : "none")}");
+        Console.WriteLine($"Sender class {(m.SenderClass is { } senderClass ? Snake(senderClass) : "-")} ({m.SenderDomain ?? "no domain"}){(m.RetainUntil is { } until ? $", deleted after {until:u}" : "")}");
         Console.WriteLine($"Content      {Snake(m.ContentState)}{(m.ContentStoredAt is { } at ? $", stored {at:u}, sha256 {m.ContentSha256}" : "")}");
         Console.WriteLine($"Sender auth  spf={m.SpfResult} dkim={m.DkimResult} dmarc={m.DmarcResult} ({m.AuthenticationOrigin ?? "no evidence"})");
         if (m.FetchErrorCode is not null)
@@ -347,6 +355,31 @@ switch (args)
         return Report(await transactions.ReprocessAsOperatorAsync(messageId, Actor.Administrator(operatorName)), queued => queued.Created
             ? $"Queued parse job {queued.Job.Id} (generation {queued.Job.Generation})."
             : $"Parse job {queued.Job.Id} is already {Snake(queued.Job.State)}.");
+
+    case ["inbound", "paused", ..]:
+        foreach (var view in await forwarding.ListPausedAsync())
+        {
+            var a = view.Address;
+            Console.WriteLine($"{a.Address}  tenant {a.TenantId}, connection {a.BankConnectionId}, paused {a.PausedAt:u}, "
+                + $"{view.ForeignMessagesInWindow} foreign in window, resumed {a.ResumeCount}x{(a.OperatorResumeRequired ? ", operator resume required" : "")}"
+                + $"{(a.State == InboundAddressState.Retired ? ", retired" : "")}");
+        }
+
+        return 0;
+
+    case ["inbound", "resume", var addressText, ..]:
+        return Report(await forwarding.ResumeAsOperatorAsync(addressText, operatorName), a => $"{a.Address} resumed.");
+
+    case ["inbound", "volume", ..]:
+    {
+        var days = int.TryParse(options.GetValueOrDefault("days"), out var n) && n > 0 ? n : 7;
+        foreach (var v in await forwarding.DailyVolumeAsync(days))
+        {
+            Console.WriteLine($"{v.Day:yyyy-MM-dd}  {v.ProviderInstanceId,-20} {v.Messages,6} messages, {v.Foreign,6} foreign");
+        }
+
+        return 0;
+    }
 
     case ["inbound", "parse-pending", ..]:
         Console.WriteLine($"Queued {await services.GetRequiredService<ParseScheduling>().QueueUnparsedAsync()} message(s) for parsing.");

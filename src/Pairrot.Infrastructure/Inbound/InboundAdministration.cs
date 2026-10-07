@@ -31,7 +31,8 @@ public sealed record InboundOperatorView(
 /// assign a message to an arbitrary tenant.
 /// </summary>
 public class InboundAdministration(
-    PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, InboundRouter router, InboundFetchQueue fetches)
+    PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, InboundRouter router, InboundFetchQueue fetches,
+    SenderScreening screening)
 {
     public async Task<IReadOnlyList<InboundMessage>> ListAsync(InboundAttention filter, int limit, CancellationToken ct = default)
     {
@@ -112,10 +113,12 @@ public class InboundAdministration(
                 HoldReason = message.HoldReason is { } hold ? SnakeCaseEnum<InboundHoldReason>.ToName(hold) : null,
             });
 
+            // Feature 008: the same collection rules as for mail that was routed on arrival.
+            var collect = await screening.ApplyAsync(message, address, null, jobs.Now(), ct);
             var existing = await db.BackgroundJobs.AsNoTracking()
                 .Where(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id)
                 .ToListAsync(ct);
-            if (message.ContentState == InboundContentState.Pending && message.ContentMode == InboundContentMode.Deferred
+            if (collect && message.ContentState == InboundContentState.Pending && message.ContentMode == InboundContentMode.Deferred
                 && !existing.Any(BackgroundJobQueue.IsActive))
             {
                 jobs.Add(BackgroundJobTypes.FetchInboundContent, message.Id,

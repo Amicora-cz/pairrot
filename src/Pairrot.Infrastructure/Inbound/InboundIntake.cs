@@ -51,6 +51,7 @@ public class InboundIntake(
     BackgroundJobQueue jobs,
     InboundRouter router,
     InboundProviderRegistry providers,
+    SenderScreening screening,
     ILogger<InboundIntake> logger) : IInboundEmailIntake
 {
     public const int MaxIdentityLength = 200;
@@ -183,6 +184,14 @@ public class InboundIntake(
         receipt.Outcome = InboundReceiptOutcome.MessageCreated;
         receipt.InboundMessageId = message.Id;
 
+        // Feature 008: foreign mail and mail to a paused address are neither stored nor retrieved.
+        var collect = route.Address is not { } routed || await screening.ApplyAsync(message, routed, receipt, now, ct);
+        if (!collect)
+        {
+            await db.SaveChangesAsync(ct);
+            return new IntakeResult(IntakeStatus.Accepted, message.Id, route.State, NewMessage: true);
+        }
+
         if (delivery.Content is { } content)
         {
             // Inline content is saved with the receipt; no retrieval job exists for it.
@@ -234,6 +243,11 @@ public class InboundIntake(
                 new InboundContentSnapshot(null, null, null, contentRecipients, null, SenderAuthentication.Unknown), address, ct))
         {
             message.HoldReason = InboundHoldReason.RecipientMismatch;
+        }
+
+        if (!await screening.ApplyAsync(message, address, null, now, ct))
+        {
+            return;
         }
 
         var existingJobs = await db.BackgroundJobs.AsNoTracking()

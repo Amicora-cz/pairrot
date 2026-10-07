@@ -36,7 +36,7 @@ public class InboundMessageService(PairrotDbContext db, TenantService tenants, I
             return ServiceError.NotFound();
         }
 
-        var query = db.InboundMessages.AsNoTracking().Where(m => m.TenantId == owner.Id);
+        var query = db.InboundMessages.AsNoTracking().Where(m => m.TenantId == owner.Id).Where(Visible);
         if (filter.BankConnectionId is { } connectionId)
         {
             query = query.Where(m => m.BankConnectionId == connectionId);
@@ -142,6 +142,10 @@ public class InboundMessageService(PairrotDbContext db, TenantService tenants, I
         return await fetches.QueueAsync(message.Id, actor, ct);
     }
 
+    /// <summary>Foreign mail and mail to a paused address are only counted (Feature 008), never listed as messages.</summary>
+    private static readonly System.Linq.Expressions.Expression<Func<InboundMessage, bool>> Visible = m =>
+        m.SenderClass != InboundSenderClass.Foreign && m.HoldReason != InboundHoldReason.AddressPaused;
+
     private Task<List<BackgroundJob>> ListJobsAsync(Guid messageId, CancellationToken ct) =>
         db.BackgroundJobs.AsNoTracking()
             .Where(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == messageId)
@@ -162,7 +166,8 @@ public class InboundMessageService(PairrotDbContext db, TenantService tenants, I
         }
 
         // Foreign and unrouted messages look exactly like missing ones.
-        var message = await db.InboundMessages.AsNoTracking().SingleOrDefaultAsync(m => m.Id == messageId && m.TenantId == owner.Id, ct);
+        var message = await db.InboundMessages.AsNoTracking().Where(Visible)
+            .SingleOrDefaultAsync(m => m.Id == messageId && m.TenantId == owner.Id, ct);
         return (owner, message);
     }
 }

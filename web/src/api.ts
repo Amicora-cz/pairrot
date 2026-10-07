@@ -88,7 +88,12 @@ export interface BankConnection {
   address_replaced?: boolean
 }
 
-export type InboundHoldReason = 'address_retired' | 'bank_connection_archived' | 'tenant_not_active' | 'recipient_mismatch'
+export type InboundHoldReason =
+  | 'address_retired'
+  | 'bank_connection_archived'
+  | 'tenant_not_active'
+  | 'recipient_mismatch'
+  | 'address_paused'
 
 /** Normalized results computed by the receiving system; `unknown` when there is no evidence. */
 export interface SenderAuthentication {
@@ -109,6 +114,8 @@ export interface InboundMessage {
   environment: 'test' | 'live'
   routing_state: 'routed'
   hold_reason: InboundHoldReason | null
+  /** Feature 8: who the delivery metadata says sent it; limits collection, not a trust decision. */
+  sender_class: 'bank' | 'forwarding_confirmation' | 'tenant_forward' | 'foreign' | null
   content_mode: 'deferred' | 'inline'
   content_state: 'pending' | 'available' | 'failed'
   header_from: string | null
@@ -230,6 +237,7 @@ export interface IncomingTransaction {
   ingestion_status: IngestionStatus
   ingestion_reasons: { code: string; message: string; parse_run_id: string | null; at: string }[]
   evidence: 'live' | 'test' | 'fixture'
+  origin_path: 'direct' | 'automatic_forward' | 'manual_forward'
   created_at: string
   updated_at: string
   /** Detail only. */
@@ -426,4 +434,42 @@ export async function apiPng(path: string, body?: unknown): Promise<Blob> {
     throw new ApiError(response.status, 'unexpected_response', 'The server did not return a PNG image.')
   }
   return response.blob()
+}
+
+/** Feature 8: a mailbox that forwards bank notifications, entered by the tenant and active at once. */
+export interface ForwardingSource {
+  id: string
+  address: string
+  state: 'active' | 'removed'
+  created_at: string
+}
+
+export type SetupStatus =
+  | 'address_not_created'
+  | 'waiting_for_first_message'
+  | 'confirmation_received'
+  | 'bank_message_trusted'
+  | 'bank_message_untrusted'
+  | 'paused_foreign_mail'
+
+/** Whether forwarding works, derived from received mail. Foreign mail appears only as counts and domains. */
+export interface ReceptionStatus {
+  setup_status: SetupStatus
+  inbound_address: string | null
+  address_processing: 'active' | 'paused_foreign_mail' | null
+  paused_at: string | null
+  operator_resume_required: boolean
+  foreign_messages_in_window: number
+  recent_foreign_domains: string[]
+  /** A mail provider's forwarding confirmation; `excerpt` is plain text, links are never opened. */
+  confirmation: { message_id: string; received_at: string; sender_domain: string | null; code: string | null; excerpt: string } | null
+  latest_bank_message: {
+    message_id: string
+    received_at: string
+    parse_outcome: string | null
+    trust_decision: string | null
+    origin_path: string | null
+    forwarding_source: string | null
+  } | null
+  forwarding_sources: ForwardingSource[]
 }

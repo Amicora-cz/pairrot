@@ -35,7 +35,8 @@ public class ParseScheduling(PairrotDbContext db, BackgroundJobQueue jobs)
     /// </summary>
     public static void AddFirstJob(BackgroundJobQueue jobs, InboundMessage message)
     {
-        if (message is { RoutingState: InboundRoutingState.Routed, HoldReason: null, ContentState: InboundContentState.Available })
+        if (message is { RoutingState: InboundRoutingState.Routed, HoldReason: null, ContentState: InboundContentState.Available }
+            && message.SenderClass is null or InboundSenderClass.Bank or InboundSenderClass.TenantForward)
         {
             jobs.Add(BackgroundJobTypes.ParseInboundMessage, message.Id, 1, BackgroundJobQueue.SystemRequester);
         }
@@ -52,6 +53,7 @@ public class ParseScheduling(PairrotDbContext db, BackgroundJobQueue jobs)
                 m.RoutingState == InboundRoutingState.Routed
                 && m.ContentState == InboundContentState.Available
                 && m.HoldReason == null
+                && (m.SenderClass == null || m.SenderClass == InboundSenderClass.Bank || m.SenderClass == InboundSenderClass.TenantForward)
                 && !db.BackgroundJobs.Any(j => j.Type == BackgroundJobTypes.ParseInboundMessage && j.TargetId == m.Id)
                 && db.BankConnections.Any(b => b.Id == m.BankConnectionId && b.Status == BankConnectionStatus.Active)
                 && db.Tenants.Any(t => t.Id == m.TenantId && t.Status == TenantStatus.Active

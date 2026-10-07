@@ -31,6 +31,7 @@ public sealed record IncomingTransactionResponse(
     string IngestionStatus,
     IReadOnlyList<IngestionReason> IngestionReasons,
     string Evidence,
+    string OriginPath,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<TransactionSourceResponse>? Sources = null)
@@ -54,6 +55,7 @@ public sealed record IncomingTransactionResponse(
         InboundMessageResponse.Snake(t.IngestionStatus),
         JsonSerializer.Deserialize<List<IngestionReason>>(t.IngestionReasons, StoredJson) ?? [],
         EvidenceOf(t.SourceKind, t.Environment),
+        InboundMessageResponse.Snake(t.OriginPath),
         t.CreatedAt,
         t.UpdatedAt,
         sources?.Select(s => new TransactionSourceResponse(s.InboundMessageId, s.ParseRunId, s.CreatedAt)).ToList());

@@ -107,6 +107,29 @@ public static partial class HtmlText
         return Lines(WebUtility.HtmlDecode(text));
     }
 
+    /// <summary>
+    /// The forwarded original of a manually forwarded message: quote markers (<c>&gt;</c>) removed,
+    /// and everything up to the forwarding separator plus the quoted header lines (From, Date,
+    /// Subject, To, in English or Czech) dropped. Without a separator, only quote markers go.
+    /// </summary>
+    public static string Unquote(string lines)
+    {
+        var unquoted = Lines(string.Join('\n', lines.Split('\n').Select(line => line.TrimStart().TrimStart('>', ' ', '\t')))).Split('\n').ToList();
+        var marker = unquoted.FindIndex(line => ForwardSeparator().IsMatch(line));
+        if (marker >= 0)
+        {
+            unquoted = unquoted.Skip(marker + 1).SkipWhile(line => ForwardHeader().IsMatch(line)).ToList();
+        }
+
+        return string.Join('\n', unquoted);
+    }
+
+    [GeneratedRegex(@"^-{2,}\s*(Forwarded message|Original Message|Přeposlaná zpráva|Původní zpráva|Původní e-mail)\s*-*$", RegexOptions.IgnoreCase)]
+    private static partial Regex ForwardSeparator();
+
+    [GeneratedRegex(@"^(From|Od|Date|Datum|Sent|Odesláno|Subject|Předmět|To|Komu|Cc|Kopie)\s*:", RegexOptions.IgnoreCase)]
+    private static partial Regex ForwardHeader();
+
     /// <summary>Normalized lines: unified line endings, no-break spaces as spaces, collapsed spaces, no blank lines.</summary>
     public static string Lines(string text)
     {

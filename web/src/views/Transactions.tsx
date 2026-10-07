@@ -19,6 +19,12 @@ const STATUS_LABELS: Record<IngestionStatus, string> = {
   disputed: 'disputed',
 }
 
+const ORIGIN_LABELS: Record<IncomingTransaction['origin_path'], string> = {
+  direct: 'directly from the bank',
+  automatic_forward: 'automatically forwarded from a registered mailbox',
+  manual_forward: 'forwarded by hand from a registered mailbox',
+}
+
 const EVIDENCE_LABELS: Record<IncomingTransaction['evidence'], string> = {
   live: 'live bank notification',
   test: 'test environment',
@@ -211,6 +217,8 @@ function TransactionDetail({ transaction: t }: { transaction: IncomingTransactio
         </dd>
         <dt>Evidence</dt>
         <dd>{EVIDENCE_LABELS[t.evidence]}</dd>
+        <dt>Received</dt>
+        <dd>{ORIGIN_LABELS[t.origin_path]}</dd>
         {t.ingestion_reasons.length > 0 && (
           <>
             <dt>Review history</dt>

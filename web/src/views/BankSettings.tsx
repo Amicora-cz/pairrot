@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type BankConnection, type ListResponse, type Tenant } from '../api'
 import { ErrorText, Section } from '../components'
 import { formatDate, useAction } from '../util'
+import { ForwardingPanel } from './Forwarding'
 import { PaymentQrPanel } from './PaymentQr'
 
 const STUB_NOTICE = 'Test address — no email is ever delivered to it.'
@@ -199,7 +200,7 @@ function ConnectionCard({
               {live ? (
                 <span>
                   Live address ({c.email_provider}, instance <code>{c.provider_instance_id}</code>), ready {formatDate(c.address_created_at)}.
-                  Add it in your internet banking as the recipient of incoming-payment notifications.
+                  Forward your bank's payment notifications to it (see below).
                   {archived && ' Kept for history; the connection is archived.'}
                 </span>
               ) : (
@@ -233,11 +234,12 @@ function ConnectionCard({
                 </dd>
               </>
             )}
-            <dt>Bank verification</dt>
-            <dd className="muted">Not available yet (bank parsing is a later feature).</dd>
           </>
         )}
       </dl>
+      {c.inbound_address && !archived && (
+        <ForwardingPanel path={path} connection={c} readOnly={readOnly} onConnectionChanged={onChanged} />
+      )}
       {notice && <p className="muted">{notice}</p>}
 
       {canChange && (

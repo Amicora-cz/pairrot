@@ -213,6 +213,71 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Inbound.ForwardingSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("address");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("RemovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("removed_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id")
+                        .HasName("pk_forwarding_sources");
+
+                    b.HasIndex("BankConnectionId", "Address")
+                        .IsUnique()
+                        .HasDatabaseName("forwarding_sources_connection_address_unique")
+                        .HasFilter("state <> 'removed'");
+
+                    b.HasIndex("TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_forwarding_sources_tenant_id_bank_connection_id");
+
+                    b.ToTable("forwarding_sources", null, t =>
+                        {
+                            t.HasCheckConstraint("forwarding_sources_address_normalized", "address = lower(btrim(address)) AND address LIKE '_%@_%'");
+
+                            t.HasCheckConstraint("forwarding_sources_state_consistent", "(state = 'active' AND removed_at IS NULL) OR (state = 'removed' AND removed_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("forwarding_sources_state_valid", "state IN ('active', 'removed')");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Core.Inbound.InboundAddress", b =>
                 {
                     b.Property<Guid>("Id")
@@ -238,6 +303,24 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)")
                         .HasColumnName("environment");
+
+                    b.Property<DateTimeOffset?>("LastResumedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_resumed_at");
+
+                    b.Property<bool>("OperatorResumeRequired")
+                        .HasColumnType("boolean")
+                        .HasColumnName("operator_resume_required");
+
+                    b.Property<DateTimeOffset?>("PausedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paused_at");
+
+                    b.Property<string>("Processing")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("processing");
 
                     b.Property<string>("ProviderInstanceId")
                         .IsRequired()
@@ -265,6 +348,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ReadyAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("ready_at");
+
+                    b.Property<int>("ResumeCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("resume_count");
 
                     b.Property<DateTimeOffset?>("RetiredAt")
                         .HasColumnType("timestamp with time zone")
@@ -306,9 +393,15 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("inbound_addresses_live_not_on_test_domain", "environment = 'test' OR address !~ '@([a-z0-9-]+\\.)*[a-z0-9-]+\\.(test|example|invalid|localhost)$'");
 
+                            t.HasCheckConstraint("inbound_addresses_pause_consistent", "(processing = 'paused_foreign_mail' AND paused_at IS NOT NULL) OR (processing = 'active' AND NOT operator_resume_required)");
+
+                            t.HasCheckConstraint("inbound_addresses_processing_valid", "processing IN ('active', 'paused_foreign_mail')");
+
                             t.HasCheckConstraint("inbound_addresses_provisioning_consistent", "(provisioning_state = 'ready' AND ready_at IS NOT NULL) OR (provisioning_state <> 'ready' AND ready_at IS NULL)");
 
                             t.HasCheckConstraint("inbound_addresses_provisioning_valid", "provisioning_state IN ('pending', 'ready', 'failed')");
+
+                            t.HasCheckConstraint("inbound_addresses_resume_count_valid", "resume_count >= 0");
 
                             t.HasCheckConstraint("inbound_addresses_retirement_consistent", "(state = 'retired' AND retired_at IS NOT NULL) OR (state = 'active' AND retired_at IS NULL)");
 
@@ -548,11 +641,25 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("recipient_evidence");
 
+                    b.Property<DateTimeOffset?>("RetainUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retain_until");
+
                     b.Property<string>("RoutingState")
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)")
                         .HasColumnName("routing_state");
+
+                    b.Property<string>("SenderClass")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("sender_class");
+
+                    b.Property<string>("SenderDomain")
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)")
+                        .HasColumnName("sender_domain");
 
                     b.Property<string>("SourceKind")
                         .IsRequired()
@@ -611,12 +718,20 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("LatestParseRunId")
                         .HasDatabaseName("ix_inbound_messages_latest_parse_run_id");
 
+                    b.HasIndex("RetainUntil")
+                        .HasDatabaseName("inbound_messages_retention_idx")
+                        .HasFilter("retain_until IS NOT NULL");
+
                     b.HasIndex("RoutingState")
                         .HasDatabaseName("inbound_messages_quarantine_idx")
                         .HasFilter("routing_state <> 'routed'");
 
                     b.HasIndex("BankConnectionId", "ReceivedAt")
                         .HasDatabaseName("inbound_messages_connection_idx");
+
+                    b.HasIndex("InboundAddressId", "CreatedAt")
+                        .HasDatabaseName("inbound_messages_foreign_idx")
+                        .HasFilter("sender_class = 'foreign'");
 
                     b.HasIndex("ProviderInstanceId", "SourceMessageId")
                         .IsUnique()
@@ -635,23 +750,27 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("inbound_messages_authentication_valid", "spf_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown') AND dkim_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown') AND dmarc_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown')");
 
-                            t.HasCheckConstraint("inbound_messages_content_consistent", "(content_state = 'available' AND content_sha256 IS NOT NULL AND content_stored_at IS NOT NULL) OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL)");
+                            t.HasCheckConstraint("inbound_messages_content_consistent", "(content_state = 'available' AND content_sha256 IS NOT NULL AND content_stored_at IS NOT NULL) OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL) OR (content_state = 'skipped' AND content_sha256 IS NULL AND content_stored_at IS NULL AND text_body IS NULL AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL)");
 
                             t.HasCheckConstraint("inbound_messages_content_digest_format", "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'");
 
                             t.HasCheckConstraint("inbound_messages_content_mode_consistent", "(content_mode = 'deferred' AND content_reference IS NOT NULL) OR (content_mode = 'inline' AND content_reference IS NULL)");
 
-                            t.HasCheckConstraint("inbound_messages_content_state_valid", "content_state IN ('pending', 'available', 'failed')");
+                            t.HasCheckConstraint("inbound_messages_content_state_valid", "content_state IN ('pending', 'available', 'failed', 'skipped')");
 
                             t.HasCheckConstraint("inbound_messages_environment_valid", "environment IN ('test', 'live')");
 
-                            t.HasCheckConstraint("inbound_messages_hold_reason_valid", "hold_reason IS NULL OR hold_reason IN ('address_retired', 'bank_connection_archived', 'tenant_not_active', 'recipient_mismatch')");
+                            t.HasCheckConstraint("inbound_messages_foreign_minimal", "(sender_class IS DISTINCT FROM 'foreign' AND hold_reason IS DISTINCT FROM 'address_paused') OR (content_state = 'skipped' AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL AND transport_metadata IS NULL AND retain_until IS NOT NULL)");
+
+                            t.HasCheckConstraint("inbound_messages_hold_reason_valid", "hold_reason IS NULL OR hold_reason IN ('address_retired', 'bank_connection_archived', 'tenant_not_active', 'recipient_mismatch', 'address_paused')");
 
                             t.HasCheckConstraint("inbound_messages_parse_consistent", "(latest_parse_run_id IS NULL AND latest_parse_outcome IS NULL AND parsed_at IS NULL) OR (latest_parse_run_id IS NOT NULL AND latest_parse_outcome IN ('parsed', 'duplicate', 'not_payment', 'unsupported', 'review_required', 'failed') AND parsed_at IS NOT NULL)");
 
                             t.HasCheckConstraint("inbound_messages_routing_consistent", "(routing_state = 'routed' AND tenant_id IS NOT NULL AND bank_connection_id IS NOT NULL AND inbound_address_id IS NOT NULL) OR (routing_state <> 'routed' AND tenant_id IS NULL AND bank_connection_id IS NULL AND inbound_address_id IS NULL AND hold_reason IS NULL)");
 
                             t.HasCheckConstraint("inbound_messages_routing_state_valid", "routing_state IN ('routed', 'unknown_recipient', 'ambiguous_recipient', 'instance_mismatch', 'missing_recipient_evidence')");
+
+                            t.HasCheckConstraint("inbound_messages_sender_class_valid", "sender_class IS NULL OR sender_class IN ('bank', 'forwarding_confirmation', 'tenant_forward', 'foreign')");
 
                             t.HasCheckConstraint("inbound_messages_source_kind_valid", "source_kind IN ('received', 'fixture')");
                         });
@@ -1282,6 +1401,12 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
 
+                    b.Property<string>("OriginPath")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("origin_path");
+
                     b.Property<string>("ParserVersion")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1366,6 +1491,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("incoming_transactions_environment_valid", "environment IN ('test', 'live')");
 
                             t.HasCheckConstraint("incoming_transactions_fingerprint_format", "comparison_fingerprint ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("incoming_transactions_origin_path_valid", "origin_path IN ('direct', 'automatic_forward', 'manual_forward')");
 
                             t.HasCheckConstraint("incoming_transactions_source_kind_valid", "source_kind IN ('received', 'fixture')");
 
@@ -1845,6 +1972,17 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_bank_connections_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Inbound.ForwardingSource", b =>
+                {
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_forwarding_sources_bank_connections_tenant_id_bank_connecti");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Inbound.InboundAddress", b =>

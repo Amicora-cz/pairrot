@@ -105,6 +105,9 @@ public class IncomingTransaction
 
     public InboundEnvironment Environment { get; set; }
 
+    /// <summary>How the establishing notification arrived (Feature 008), so a later policy can tell direct and forwarded receipts apart.</summary>
+    public OriginPath OriginPath { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

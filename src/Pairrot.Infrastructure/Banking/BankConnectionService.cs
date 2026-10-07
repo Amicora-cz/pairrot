@@ -218,7 +218,8 @@ public class BankConnectionService(
     /// Assigns a notification address on the default provider instance, or returns the current one.
     /// A connection that has only a test address gets a live address once a live instance is the
     /// default: the test address is retired (kept and reserved) and the response reports the
-    /// replacement. A live address is never replaced, downgraded, or moved to another instance by
+    /// replacement. An address paused for foreign mail (Feature 008) is replaced the same way.
+    /// Otherwise a live address is never replaced, downgraded, or moved to another instance by
     /// a configuration change. Retries and concurrent requests end with one address: the
     /// connection's row version and the one-active-address index make all but one assignment fail,
     /// and those then return the saved address. An address whose provider setup is pending or
@@ -254,7 +255,9 @@ public class BankConnectionService(
                 return await ProvisionAsync(connection, current, false, ct);
             }
 
-            if (current is not null
+            // A paused address (Feature 008) is replaced like a stub: the old one stays retired, reserved, and paused.
+            var paused = current?.Processing == InboundAddressProcessing.PausedForeignMail;
+            if (current is not null && !(paused && !archived)
                 && (current.Environment == InboundEnvironment.Live || target.Environment == InboundEnvironment.Test || archived))
             {
                 return await ToViewAsync(connection, ct) with { ReplacedStub = false };
