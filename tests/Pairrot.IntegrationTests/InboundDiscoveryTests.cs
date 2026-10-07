@@ -65,7 +65,7 @@ public class InboundDiscoveryTests(PairrotFixture fx)
         {
             var message = await db.InboundMessages.SingleAsync(m => m.SourceMessageId == emailId);
             Assert.Equal(2, await db.InboundDeliveryReceipts.CountAsync(r => r.InboundMessageId == message.Id));
-            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.TargetId == message.Id));
+            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id));
         });
     }
 
@@ -112,7 +112,7 @@ public class InboundDiscoveryTests(PairrotFixture fx)
         {
             var message = await db.InboundMessages.SingleAsync(m => m.SourceMessageId == emailId);
             Assert.Equal(2, await db.InboundDeliveryReceipts.CountAsync(r => r.InboundMessageId == message.Id));
-            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.TargetId == message.Id));
+            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id));
         });
     }
 
@@ -213,7 +213,7 @@ public class InboundDiscoveryTests(PairrotFixture fx)
         {
             var message = await db.InboundMessages.SingleAsync(m => m.SourceMessageId == silentId);
             Assert.Equal((InboundRoutingState.MissingRecipientEvidence, (Guid?)null), (message.RoutingState, message.TenantId));
-            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.TargetId == message.Id));
+            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id));
         });
         Assert.Empty((await Inbound.Client(box.Key).GetAsync("/v1/tenant/inbound-messages").ExpectAsync(HttpStatusCode.OK)).Items());
 

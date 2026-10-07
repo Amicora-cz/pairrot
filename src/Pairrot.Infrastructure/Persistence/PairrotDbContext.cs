@@ -6,6 +6,7 @@ using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
 using Pairrot.Core.Payments;
 using Pairrot.Core.Tenants;
+using Pairrot.Core.Transactions;
 using Pairrot.Core.Users;
 using Pairrot.Infrastructure.Users;
 
@@ -27,6 +28,9 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<InboundMessage> InboundMessages => Set<InboundMessage>();
     public DbSet<BackgroundJob> BackgroundJobs => Set<BackgroundJob>();
     public DbSet<InboundSyncState> InboundSyncStates => Set<InboundSyncState>();
+    public DbSet<MessageParseRun> MessageParseRuns => Set<MessageParseRun>();
+    public DbSet<IncomingTransaction> IncomingTransactions => Set<IncomingTransaction>();
+    public DbSet<TransactionSource> TransactionSources => Set<TransactionSource>();
 
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();

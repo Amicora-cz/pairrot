@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Pairrot.Core.Parsing;
 using Pairrot.Infrastructure.Banking;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Inbound.Resend;
@@ -10,6 +11,7 @@ using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Users;
 
 namespace Pairrot.Infrastructure;
@@ -79,6 +81,14 @@ public static class DependencyInjection
         services.AddScoped<InboundDiscoveryService>();
         services.AddScoped<IBackgroundJobHandler, InboundDiscoveryJob>();
 
+        // Feature 007: bank profiles are code, selected by bank code; tenants cannot add or choose them.
+        services.AddSingleton<IBankProfile, CeskaSporitelnaProfile>();
+        services.AddSingleton<BankProfileRegistry>();
+        services.Configure<MessageParsingOptions>(configuration.GetSection(MessageParsingOptions.Section));
+        services.AddScoped<IBackgroundJobHandler, MessageParseJob>();
+        services.AddScoped<ParseScheduling>();
+        services.AddScoped<IncomingTransactionService>();
+
         services.Configure<BackgroundJobOptions>(configuration.GetSection(BackgroundJobOptions.Section));
         services.AddScoped<BackgroundJobQueue>();
         services.AddScoped<BackgroundJobRunner>();
@@ -97,6 +107,7 @@ public static class DependencyInjection
         {
             services.AddHostedService<BackgroundJobWorker>();
             services.AddHostedService<InboundDiscoveryScheduler>();
+            services.AddHostedService<MessageParseScheduler>();
         }
 
         return services;

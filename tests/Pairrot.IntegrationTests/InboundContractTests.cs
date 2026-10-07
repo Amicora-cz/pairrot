@@ -47,8 +47,8 @@ public class InboundContractTests(PairrotFixture fx)
         await fx.WithDbAsync(async db =>
         {
             Assert.Equal(InboundContentState.Available, (await db.InboundMessages.SingleAsync(m => m.Id == inline.MessageId)).ContentState);
-            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.TargetId == inline.MessageId));
-            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.TargetId == deferred.MessageId));
+            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == inline.MessageId));
+            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == deferred.MessageId));
         });
         await Inbound.RunJobsAsync();
         Assert.Contains($"{InboundHarness.DeferredInstanceId}/{reference}", Inbound.Sources.Retrieved);
@@ -129,7 +129,7 @@ public class InboundContractTests(PairrotFixture fx)
         {
             var quarantined = await db.InboundMessages.SingleAsync(m => m.Id == missing.MessageId);
             Assert.Equal((InboundContentState.Available, (Guid?)null), (quarantined.ContentState, quarantined.TenantId));
-            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.TargetId == claimed.MessageId));
+            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == claimed.MessageId));
         });
         var visible = await Inbound.Client(child.Key).GetAsync(Messages).ExpectAsync(HttpStatusCode.OK);
         Assert.DoesNotContain(visible.Items(), m => m!.Str("id") == missing.MessageId.ToString() || m!.Str("id") == claimed.MessageId.ToString());

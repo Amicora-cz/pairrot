@@ -10,12 +10,9 @@ Implemented so far:
 - **Feature 4: payment QR generation** ([spec](docs/features/004-payment-qr-generation.md)): Czech QR Platba (SPAYD) payloads and PNG codes for saved accounts
 - **Feature 5: expected payments** ([spec](docs/features/005-expected-payments.md)): saved payment requests with a reservation reference, frozen payment instructions, edits, and cancellation
 - **Feature 6: inbound email reception** ([spec](docs/features/006-inbound-email-reception.md)): a provider-independent intake with Resend as the first live adapter, verified webhooks, a startup and hourly recovery check for missed webhooks, routing to bank connections, and stored source content retrieved by a background worker. Live reception through a real Resend account is not verified yet (see [below](#inbound-email))
+- **Feature 7: bank messages to incoming transactions, in progress** ([spec](docs/features/007-bank-message-parsing.md)): the bank-independent parser pipeline is implemented. It covers parse jobs, source trust, normalization, duplicate and reprocessing rules, transactions with their supporting messages, the API, the SPA, and the CLI. The Česká spořitelna profile is installed but recognizes nothing yet, because no verified notification samples exist (see [below](#bank-message-parsing))
 
 The target architecture is described in [docs/architektura.md](docs/architektura.md) (in Czech).
-
-Designed next, not yet implemented:
-
-- [Feature 007: Česká spořitelna messages to incoming transactions](docs/features/007-bank-message-parsing.md)
 
 ## Tech stack
 
@@ -155,8 +152,8 @@ If an `Authorization` header is present, only the key is checked; an invalid key
 
 | Caller | Endpoints |
 | --- | --- |
-| Tenant key, or a session with the tenant selected | `GET /v1/tenant`, `GET/PATCH /v1/tenant/configuration`, `GET/POST /v1/tenant/bank-connections`, `GET/PATCH/DELETE /v1/tenant/bank-connections/{id}`, `POST /v1/tenant/bank-connections/{id}/inbound-address`, `POST /v1/tenant/bank-connections/{id}/payment-qr` and `.../payment-qr.png`, `GET/POST /v1/tenant/payment-requests`, `GET/PATCH /v1/tenant/payment-requests/{id}`, `POST .../{id}/cancel`, `GET .../{id}/payment-instructions` and `.../{id}/qr.png`, `GET /v1/tenant/inbound-messages`, `GET .../inbound-messages/{id}`, `GET .../{id}/source`, `POST .../{id}/retry-fetch` |
-| Management key, or a session of a root administrator with `can_create_subtenants` | `POST/GET /v1/subtenants`, `GET/PATCH/DELETE /v1/subtenants/{id}`, `GET/POST /v1/subtenants/{id}/api-keys`, `DELETE /v1/subtenants/{id}/api-keys/{keyId}`, and the same bank connection, payment request, and inbound message routes under `/v1/subtenants/{id}/bank-connections`, `/v1/subtenants/{id}/payment-requests`, and `/v1/subtenants/{id}/inbound-messages` |
+| Tenant key, or a session with the tenant selected | `GET /v1/tenant`, `GET/PATCH /v1/tenant/configuration`, `GET/POST /v1/tenant/bank-connections`, `GET/PATCH/DELETE /v1/tenant/bank-connections/{id}`, `POST /v1/tenant/bank-connections/{id}/inbound-address`, `POST /v1/tenant/bank-connections/{id}/payment-qr` and `.../payment-qr.png`, `GET/POST /v1/tenant/payment-requests`, `GET/PATCH /v1/tenant/payment-requests/{id}`, `POST .../{id}/cancel`, `GET .../{id}/payment-instructions` and `.../{id}/qr.png`, `GET /v1/tenant/inbound-messages`, `GET .../inbound-messages/{id}`, `GET .../{id}/source`, `POST .../{id}/retry-fetch`, `GET .../{id}/parse-runs`, `POST .../{id}/reprocess`, `GET /v1/tenant/transactions`, `GET /v1/tenant/transactions/{id}` |
+| Management key, or a session of a root administrator with `can_create_subtenants` | `POST/GET /v1/subtenants`, `GET/PATCH/DELETE /v1/subtenants/{id}`, `GET/POST /v1/subtenants/{id}/api-keys`, `DELETE /v1/subtenants/{id}/api-keys/{keyId}`, and the same bank connection, payment request, and inbound message routes under `/v1/subtenants/{id}/bank-connections`, `/v1/subtenants/{id}/payment-requests`, `/v1/subtenants/{id}/inbound-messages`, and `/v1/subtenants/{id}/transactions` |
 | Provider signature (no key, no cookie) | `POST /v1/webhooks/resend/{instanceId}` and `POST /v1/webhooks/resend` |
 | Session only | `GET/POST /v1/tenant/api-keys`, `DELETE /v1/tenant/api-keys/{id}`, `GET /v1/tenant/audit-events`, `GET /v1/subtenants/{id}/audit-events` |
 | Sign-in and session | `GET /v1/auth/antiforgery`, `POST /v1/auth/login`, `GET /v1/auth/session`, `POST /v1/auth/select-tenant`, `POST /v1/auth/logout`, `POST /v1/auth/logout-all`, `POST /v1/auth/change-password` |
@@ -166,7 +163,7 @@ Browser requests carry two extra headers:
 - `X-XSRF-TOKEN` is required on login and on every cookie-authenticated `POST`, `PATCH`, or `DELETE`. Get it from `GET /v1/auth/antiforgery`, and get a new one after login and after logout.
 - `X-Pairrot-Tenant-Id` is the tenant the page is showing. It is required on tenant-scoped browser requests. If the session has switched to another tenant, for example in another tab, the request fails with `409 tenant_context_changed` instead of acting on the wrong tenant.
 
-Errors use the format `{"error": {"code": "...", "message": "..."}}` with the statuses 400, 401, 403, 404, 409, 412, 413, 428, 429, and 503. Validation errors about one request field also include `"field"`, so a form can show the error next to that input. Unauthenticated browser requests get a `401` JSON response, never a redirect. A resource that exists but belongs to another tenant returns the same 404 as an unknown identifier. The full contracts are in the specs for [Feature 1](docs/features/001-tenants.md#4-api-contract), [Feature 2](docs/features/002-user-login-and-sessions.md#6-api-additions), [Feature 3](docs/features/003-bank-configuration-and-inbound-address.md#6-api-additions-and-permissions), [Feature 4](docs/features/004-payment-qr-generation.md#5-api-additions), [Feature 5](docs/features/005-expected-payments.md#5-api), and [Feature 6](docs/features/006-inbound-email-reception.md#8-api-and-administrative-tools).
+Errors use the format `{"error": {"code": "...", "message": "..."}}` with the statuses 400, 401, 403, 404, 409, 412, 413, 428, 429, and 503. Validation errors about one request field also include `"field"`, so a form can show the error next to that input. Unauthenticated browser requests get a `401` JSON response, never a redirect. A resource that exists but belongs to another tenant returns the same 404 as an unknown identifier. The full contracts are in the specs for [Feature 1](docs/features/001-tenants.md#4-api-contract), [Feature 2](docs/features/002-user-login-and-sessions.md#6-api-additions), [Feature 3](docs/features/003-bank-configuration-and-inbound-address.md#6-api-additions-and-permissions), [Feature 4](docs/features/004-payment-qr-generation.md#5-api-additions), [Feature 5](docs/features/005-expected-payments.md#5-api), [Feature 6](docs/features/006-inbound-email-reception.md#8-api-and-administrative-tools), and [Feature 7](docs/features/007-bank-message-parsing.md#8-api-and-local-spa).
 
 ### Bank connections
 
@@ -235,6 +232,28 @@ Delivery adapters authenticate their own transport and hand a common `InboundDel
 
 Automated tests use signed fixture events, a fake Receiving API, and fake inline and deferred adapters. They prove transport handling, not bank origin. A controlled real email through a Resend account (Feature 6 acceptance criterion 8) has not been run yet: it needs Resend credentials, a receiving domain, and a public HTTPS webhook URL.
 
+### Bank message parsing
+
+A worker parses every stored message that is routed and not held. It does this whether or not a payment request exists. Messages stored before Feature 7, or routed later by an operator, are picked up by a sweep at startup and then every `MessageParsing:SweepInterval` (10 minutes). The bank profile is chosen from the destination account's bank code. Profiles are code, so tenants cannot supply or choose one. Each profile only recognizes templates and extracts raw fields. Everything else is shared by all profiles (`Pairrot.Core.Parsing`) and reads only the common snapshot, never provider data:
+
+- **Trust:** a sender is trusted only when the From address is an allowed bank identity and the receiving system reports `dmarc=pass`. Display names, forwarded copies, and `Authentication-Results` lines inside the email are not evidence. Missing evidence, `unknown`, or results with no receiving-system origin are untrusted.
+- **Normalization:** amounts are parsed exactly into minor units, with no rounding and no floating point. A precision error or overflow requires review.
+- **Required fields:** a missing amount, currency, or booking date requires review, as does an unparseable or ambiguous date or an invalid variable symbol.
+- **Destination account:** a full destination account must equal the saved connection. A masked account counts only where the profile documents why it is sufficient.
+- **Text and HTML:** HTML is reduced to inert text before matching. If the text and HTML parts disagree on payment-critical facts, the message requires review.
+- **Outcomes:** debits, balances, and pending movements are `not_payment`. Corrections require review. Unknown templates and multi-movement notices are `unsupported`, with no retry loop.
+
+Every attempt is an immutable `message_parse_runs` row. It records the source digest, profile and parser version, trust evidence, outcome and reasons, and the extracted candidate. A run with `parsed` or `duplicate` links the message to an `incoming_transactions` row, and a message supports at most one transaction:
+
+- **Bank references:** a proven bank reference links several notices to one movement. The same reference with different facts disputes the existing movement instead of adding another.
+- **No reference:** notices without a reference are never merged. A lookalike (same amount, date, and symbol) is recorded and flagged `review_required` together with the records it resembles.
+- **Reprocessing:** `POST .../inbound-messages/{id}/reprocess` queues a new generation. If the facts are unchanged, the transaction ID stays. If the facts changed, or the source is now rejected, the transaction is marked `disputed` and nothing is overwritten.
+- **Concurrency:** the run, the transaction changes, and the job completion are saved atomically under the job lease. Saves are serialized per connection, so two workers cannot create the same movement.
+
+Transactions carry `evidence` (`live`, `test`, or `fixture`) from the message's instance. Nothing in this feature changes a payment request or sends a webhook. Only `accepted` records with `live` evidence may ever be matched later.
+
+The selected bank is Česká spořitelna (`ceska_sporitelna`, bank code 0800), but no real notification samples have been obtained yet. The profile therefore trusts no sender and has no template, and every Česká spořitelna message is recorded as `unsupported` (`no_verified_templates`). Sender identities, templates, formats, masking, and any transaction reference must come from sanitized real samples kept as fixtures. Until then, live bank support is unverified (Feature 7 acceptance criteria 1 and 12). The automated tests run the common pipeline against a synthetic test profile (`tests/Shared/SyntheticBankProfile.cs`), which describes no real bank.
+
 ## Administrative CLI
 
 Root tenants, their keys, and user accounts are managed from the command line, never over HTTP. There is no public signup, invitation flow, or emailed password reset.
@@ -261,6 +280,8 @@ dotnet run --project src/Pairrot.Admin -- inbound retry-fetch <message-id>
 dotnet run --project src/Pairrot.Admin -- inbound sync
 dotnet run --project src/Pairrot.Admin -- inbound sync run <instance-id>
 dotnet run --project src/Pairrot.Admin -- inbound sync set-from <instance-id> <ISO time with offset>
+dotnet run --project src/Pairrot.Admin -- inbound reprocess <message-id>
+dotnet run --project src/Pairrot.Admin -- inbound parse-pending
 ```
 
 All commands accept `--operator <name>`, which is recorded in the audit log. `setup` and the `keys` commands also accept `--root <external-id>` (default `nalekci.cz`). A `<tenant>` is a tenant ID, a root external ID (`nalekci.cz`), or `root/child` (`nalekci.cz/studio_123`).
@@ -289,6 +310,8 @@ The tenant tables mirror [docs/features/001-tenants-schema.sql](docs/features/00
 Feature 2 also gives audit events a user actor, with exactly one actor per event. Feature 3 adds `bank_connections` and records connection creation, label changes, address assignment, and archiving in `tenant_audit_events`. Feature 5 adds `payment_requests`. Its composite foreign key `(tenant_id, bank_connection_id)` references `bank_connections (tenant_id, id)`, so a request cannot point at another tenant's account. Unique indexes cover `(tenant_id, external_id)` and `(bank_connection_id, variable_symbol_key)`, and check constraints cover the amount range, currency, symbol format, state, and cancellation timestamps.
 
 Feature 6 adds `inbound_addresses`, `inbound_delivery_receipts`, `inbound_messages`, `background_jobs`, and `inbound_sync_states`, and moves the Feature 3 address columns of `bank_connections` into `inbound_addresses` without changing any address or owner. Addresses are globally unique, retired ones included, and at most one is active per connection; an address on a reserved test domain can never be live. Messages reference their tenant, connection, and address through composite foreign keys, so an owner always matches, and an unrouted message has no owner at all. Jobs allow one active job per operation and target.
+
+Feature 7 adds `message_parse_runs` (unique per message and job generation), `incoming_transactions` (unique per connection, profile, and non-null bank reference; positive amounts in minor units; typed money, identity, and date columns), and `transaction_sources` (one per message). It also adds the latest parse run, its outcome, and the parse time to `inbound_messages`. Runs, transactions, and source links carry their tenant and connection, and every reference between them, and to the message, includes the owner. The database therefore rejects cross-tenant links, a source link whose run read another message, and a latest run that belongs to another message. There is no allocation table and no change to payment requests.
 
 ## Tests
 

@@ -5,6 +5,7 @@ using Pairrot.Core.Inbound;
 using Pairrot.Core.Payments;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Transactions;
 
 namespace Pairrot.Api.Endpoints;
 
@@ -41,6 +42,8 @@ public static class InboundMessageEndpoints
         group.MapGet("/{id:guid}", GetAsync);
         group.MapGet("/{id:guid}/source", SourceAsync);
         group.MapPost("/{id:guid}/retry-fetch", RetryFetchAsync);
+        group.MapGet("/{id:guid}/parse-runs", ParseRunsAsync);
+        group.MapPost("/{id:guid}/reprocess", ReprocessAsync);
     }
 
     private static async Task<IResult> ListAsync(
@@ -131,6 +134,23 @@ public static class InboundMessageEndpoints
 
         var queued = result.Value!;
         return Results.Accepted(null, new QueuedRetrievalResponse(queued.Job.Id, InboundMessageResponse.Snake(queued.Job.State), queued.Created));
+    }
+
+    private static async Task<IResult> ParseRunsAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, CancellationToken ct)
+    {
+        var result = await transactions.ListParseRunsAsync(user.GetTenantId(), Subtenant(http), id, ct);
+        return result.Error is { } failure ? ApiErrors.From(failure) : Results.Ok(ParseHistoryResponse.From(result.Value!));
+    }
+
+    /// <summary>Queues a new parse generation with the installed profile; repeated calls return the active job.</summary>
+    private static async Task<IResult> ReprocessAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, IncomingTransactionService transactions, CancellationToken ct)
+    {
+        var result = await transactions.ReprocessAsync(user.GetTenantId(), Subtenant(http), id, user.GetActor(), ct);
+        return result.Error is { } failure
+            ? ApiErrors.From(failure)
+            : Results.Accepted(null, QueuedParseResponse.From(result.Value!.Job, result.Value.Created));
     }
 
     private static bool TryGetTime(IQueryCollection query, string name, out DateTimeOffset? value, out IResult? error)

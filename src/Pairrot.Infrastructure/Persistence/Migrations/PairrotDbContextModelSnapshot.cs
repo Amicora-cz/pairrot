@@ -515,6 +515,19 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("inbound_address_id");
 
+                    b.Property<string>("LatestParseOutcome")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("latest_parse_outcome");
+
+                    b.Property<Guid?>("LatestParseRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("latest_parse_run_id");
+
+                    b.Property<DateTimeOffset?>("ParsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("parsed_at");
+
                     b.Property<string>("ProviderInstanceId")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -595,6 +608,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_inbound_messages");
 
+                    b.HasIndex("LatestParseRunId")
+                        .HasDatabaseName("ix_inbound_messages_latest_parse_run_id");
+
                     b.HasIndex("RoutingState")
                         .HasDatabaseName("inbound_messages_quarantine_idx")
                         .HasFilter("routing_state <> 'routed'");
@@ -630,6 +646,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("inbound_messages_environment_valid", "environment IN ('test', 'live')");
 
                             t.HasCheckConstraint("inbound_messages_hold_reason_valid", "hold_reason IS NULL OR hold_reason IN ('address_retired', 'bank_connection_archived', 'tenant_not_active', 'recipient_mismatch')");
+
+                            t.HasCheckConstraint("inbound_messages_parse_consistent", "(latest_parse_run_id IS NULL AND latest_parse_outcome IS NULL AND parsed_at IS NULL) OR (latest_parse_run_id IS NOT NULL AND latest_parse_outcome IN ('parsed', 'duplicate', 'not_payment', 'unsupported', 'review_required', 'failed') AND parsed_at IS NOT NULL)");
 
                             t.HasCheckConstraint("inbound_messages_routing_consistent", "(routing_state = 'routed' AND tenant_id IS NOT NULL AND bank_connection_id IS NOT NULL AND inbound_address_id IS NOT NULL) OR (routing_state <> 'routed' AND tenant_id IS NULL AND bank_connection_id IS NULL AND inbound_address_id IS NULL AND hold_reason IS NULL)");
 
@@ -1193,6 +1211,363 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Transactions.IncomingTransaction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Amount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<string>("BankProfile")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("bank_profile");
+
+                    b.Property<string>("BankTransactionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("bank_transaction_id");
+
+                    b.Property<DateOnly>("BookedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("booked_on");
+
+                    b.Property<string>("ComparisonFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("comparison_fingerprint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("environment");
+
+                    b.Property<string>("IngestionReasons")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ingestion_reasons");
+
+                    b.Property<string>("IngestionStatus")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("ingestion_status");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("message");
+
+                    b.Property<DateTimeOffset?>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("ParserVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("parser_version");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("SenderAccount")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("sender_account");
+
+                    b.Property<string>("SenderAccountRaw")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("sender_account_raw");
+
+                    b.Property<string>("SenderName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("sender_name");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("source_kind");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VariableSymbol")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("variable_symbol");
+
+                    b.Property<string>("VariableSymbolKey")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("variable_symbol_key");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id")
+                        .HasName("pk_incoming_transactions");
+
+                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
+                        .HasName("ak_incoming_transactions_id_tenant_id_bank_connection_id");
+
+                    b.HasIndex("BankConnectionId", "ComparisonFingerprint")
+                        .HasDatabaseName("incoming_transactions_fingerprint_idx");
+
+                    b.HasIndex("TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_incoming_transactions_tenant_id_bank_connection_id");
+
+                    b.HasIndex("TenantId", "Id")
+                        .HasDatabaseName("incoming_transactions_tenant_idx");
+
+                    b.HasIndex("BankConnectionId", "BankProfile", "BankTransactionId")
+                        .IsUnique()
+                        .HasDatabaseName("incoming_transactions_bank_reference_unique")
+                        .HasFilter("bank_transaction_id IS NOT NULL");
+
+                    b.ToTable("incoming_transactions", null, t =>
+                        {
+                            t.HasCheckConstraint("incoming_transactions_amount_positive", "amount > 0");
+
+                            t.HasCheckConstraint("incoming_transactions_currency_valid", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("incoming_transactions_environment_valid", "environment IN ('test', 'live')");
+
+                            t.HasCheckConstraint("incoming_transactions_fingerprint_format", "comparison_fingerprint ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("incoming_transactions_source_kind_valid", "source_kind IN ('received', 'fixture')");
+
+                            t.HasCheckConstraint("incoming_transactions_status_valid", "ingestion_status IN ('accepted', 'review_required', 'disputed')");
+
+                            t.HasCheckConstraint("incoming_transactions_symbol_key_consistent", "(variable_symbol IS NULL AND variable_symbol_key IS NULL) OR (variable_symbol IS NOT NULL AND variable_symbol_key IS NOT NULL)");
+
+                            t.HasCheckConstraint("incoming_transactions_symbol_valid", "variable_symbol IS NULL OR variable_symbol ~ '^[0-9]{1,10}$'");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Transactions.MessageParseRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<string>("BankProfile")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("bank_profile");
+
+                    b.Property<string>("Candidate")
+                        .HasColumnType("text")
+                        .HasColumnName("candidate");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<Guid>("InboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("inbound_message_id");
+
+                    b.Property<int>("JobGeneration")
+                        .HasColumnType("integer")
+                        .HasColumnName("job_generation");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("outcome");
+
+                    b.Property<string>("ParserVersion")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("parser_version");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<string>("ReasonMessage")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason_message");
+
+                    b.Property<string>("Reasons")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("reasons");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("requested_by");
+
+                    b.Property<string>("SourcePart")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("source_part");
+
+                    b.Property<string>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_sha256");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("TemplateId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("template_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.Property<string>("TrustDecision")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("trust_decision");
+
+                    b.Property<string>("TrustEvidence")
+                        .HasColumnType("text")
+                        .HasColumnName("trust_evidence");
+
+                    b.Property<string>("Worker")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("worker");
+
+                    b.HasKey("Id")
+                        .HasName("pk_message_parse_runs");
+
+                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
+                        .HasName("ak_message_parse_runs_id_tenant_id_bank_connection_id");
+
+                    b.HasIndex("InboundMessageId", "JobGeneration")
+                        .IsUnique()
+                        .HasDatabaseName("message_parse_runs_message_generation_unique");
+
+                    b.HasIndex("TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_message_parse_runs_tenant_id_bank_connection_id");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_message_parse_runs_transaction_id_tenant_id_bank_connection");
+
+                    b.ToTable("message_parse_runs", null, t =>
+                        {
+                            t.HasCheckConstraint("message_parse_runs_digest_format", "source_sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("message_parse_runs_generation_valid", "job_generation >= 1");
+
+                            t.HasCheckConstraint("message_parse_runs_outcome_valid", "outcome IN ('parsed', 'duplicate', 'not_payment', 'unsupported', 'review_required', 'failed')");
+
+                            t.HasCheckConstraint("message_parse_runs_part_valid", "source_part IS NULL OR source_part IN ('text', 'html')");
+
+                            t.HasCheckConstraint("message_parse_runs_times_valid", "completed_at >= started_at");
+
+                            t.HasCheckConstraint("message_parse_runs_transaction_consistent", "outcome NOT IN ('parsed', 'duplicate') OR transaction_id IS NOT NULL");
+
+                            t.HasCheckConstraint("message_parse_runs_trust_valid", "trust_decision IS NULL OR trust_decision IN ('trusted', 'untrusted')");
+                        });
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Transactions.TransactionSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("BankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_connection_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("InboundMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("inbound_message_id");
+
+                    b.Property<Guid>("ParseRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parse_run_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_transaction_sources");
+
+                    b.HasIndex("InboundMessageId")
+                        .IsUnique()
+                        .HasDatabaseName("transaction_sources_message_unique");
+
+                    b.HasIndex("TransactionId")
+                        .HasDatabaseName("transaction_sources_transaction_idx");
+
+                    b.HasIndex("ParseRunId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_transaction_sources_parse_run_id_tenant_id_bank_connection_");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
+                        .HasDatabaseName("ix_transaction_sources_transaction_id_tenant_id_bank_connectio");
+
+                    b.ToTable("transaction_sources", (string)null);
+                });
+
             modelBuilder.Entity("Pairrot.Core.Users.TenantMembership", b =>
                 {
                     b.Property<Guid>("UserId")
@@ -1502,6 +1877,12 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Inbound.InboundMessage", b =>
                 {
+                    b.HasOne("Pairrot.Core.Transactions.MessageParseRun", null)
+                        .WithMany()
+                        .HasForeignKey("LatestParseRunId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_inbound_messages_message_parse_runs_latest_parse_run_id");
+
                     b.HasOne("Pairrot.Core.Tenants.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -1584,6 +1965,54 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_tenant_audit_events_tenants_target_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Transactions.IncomingTransaction", b =>
+                {
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_incoming_transactions_bank_connections_tenant_id_bank_conne");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Transactions.MessageParseRun", b =>
+                {
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_message_parse_runs_bank_connections_tenant_id_bank_connecti");
+
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_message_parse_runs_incoming_transactions_transaction_id_ten");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Transactions.TransactionSource", b =>
+                {
+                    b.HasOne("Pairrot.Core.Transactions.MessageParseRun", null)
+                        .WithMany()
+                        .HasForeignKey("ParseRunId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_transaction_sources_message_parse_runs_parse_run_id_tenant_");
+
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_transaction_sources_incoming_transactions_transaction_id_te");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Users.TenantMembership", b =>

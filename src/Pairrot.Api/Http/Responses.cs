@@ -214,6 +214,9 @@ public sealed record InboundMessageResponse(
     SenderAuthenticationResponse SenderAuthentication,
     ErrorAtResponse? ContentError,
     bool SourceAvailable,
+    Guid? LatestParseRunId,
+    string? LatestParseOutcome,
+    DateTimeOffset? ParsedAt,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RetrievalJobResponse>? Retrievals = null)
@@ -241,6 +244,9 @@ public sealed record InboundMessageResponse(
         new SenderAuthenticationResponse(m.SpfResult, m.DkimResult, m.DmarcResult, m.AuthenticationOrigin),
         m.FetchErrorCode is { } code ? new ErrorAtResponse(code, m.FetchErrorMessage ?? "", m.FetchErrorAt) : null,
         m.ContentState == InboundContentState.Available && m.HoldReason != InboundHoldReason.RecipientMismatch,
+        m.LatestParseRunId,
+        m.LatestParseOutcome is { } outcome ? Snake(outcome) : null,
+        m.ParsedAt,
         m.CreatedAt,
         m.UpdatedAt,
         jobs?.Select(RetrievalJobResponse.From).ToList());

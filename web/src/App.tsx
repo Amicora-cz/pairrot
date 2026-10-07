@@ -10,9 +10,10 @@ import { InboundMessages } from './views/InboundMessages'
 import { Login } from './views/Login'
 import { Subtenants } from './views/Subtenants'
 import { TenantPicker } from './views/TenantPicker'
+import { Transactions } from './views/Transactions'
 import { StatusBadge } from './components'
 
-type Tab = 'configuration' | 'bank' | 'payments' | 'inbound' | 'keys' | 'subtenants' | 'history' | 'account'
+type Tab = 'configuration' | 'bank' | 'payments' | 'inbound' | 'transactions' | 'keys' | 'subtenants' | 'history' | 'account'
 
 // Background polling only detects expiry; it is marked so it does not keep the session alive.
 const POLL_MS = 60_000
@@ -136,6 +137,7 @@ export default function App() {
                 ['bank', 'Bank settings'],
                 ['payments', 'Expected payments'],
                 ['inbound', 'Inbound emails'],
+                ['transactions', 'Bank transactions'],
                 ['keys', 'API keys'],
                 ...(canManageChildren ? [['subtenants', 'Subtenants']] : []),
                 ['history', 'History'],
@@ -156,6 +158,7 @@ export default function App() {
             {activeTab === 'bank' && <BankSettings key={selected.tenant.id} basePath="/v1/tenant/bank-connections" owner={selected.tenant} />}
             {activeTab === 'payments' && <ExpectedPayments prefix="/v1/tenant" owner={selected.tenant} readOnly={selected.blocked} />}
             {activeTab === 'inbound' && <InboundMessages prefix="/v1/tenant" owner={selected.tenant} readOnly={selected.blocked} />}
+            {activeTab === 'transactions' && <Transactions prefix="/v1/tenant" owner={selected.tenant} />}
             {activeTab === 'keys' && <ApiKeys canIssueManagement={canManageChildren} />}
             {activeTab === 'subtenants' && <Subtenants />}
             {activeTab === 'history' && <History path="/v1/tenant/audit-events" />}

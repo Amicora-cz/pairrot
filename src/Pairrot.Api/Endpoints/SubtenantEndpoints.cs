@@ -34,6 +34,7 @@ public static class SubtenantEndpoints
         group.MapSubtenantBankConnections();
         group.MapSubtenantPaymentRequests();
         group.MapSubtenantInboundMessages();
+        group.MapSubtenantTransactions();
     }
 
     private static async Task<IResult> CreateAsync(

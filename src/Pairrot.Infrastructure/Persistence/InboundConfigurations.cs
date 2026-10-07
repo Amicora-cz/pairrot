@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Pairrot.Core.Banking;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
+using Pairrot.Core.Parsing;
 using Pairrot.Core.Tenants;
+using Pairrot.Core.Transactions;
 
 namespace Pairrot.Infrastructure.Persistence;
 
@@ -138,6 +140,10 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
                 + "OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) "
                 + "OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL)");
             t.HasCheckConstraint("inbound_messages_content_digest_format", "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'");
+            t.HasCheckConstraint(
+                "inbound_messages_parse_consistent",
+                $"(latest_parse_run_id IS NULL AND latest_parse_outcome IS NULL AND parsed_at IS NULL) "
+                + $"OR (latest_parse_run_id IS NOT NULL AND latest_parse_outcome IN ({SnakeCaseEnum<ParseOutcome>.SqlList}) AND parsed_at IS NOT NULL)");
         });
 
         builder.HasKey(m => m.Id);
@@ -166,6 +172,10 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
         builder.Property(m => m.AuthenticationOrigin).HasMaxLength(100);
         builder.Property(m => m.FetchErrorCode).HasMaxLength(50);
         builder.Property(m => m.FetchErrorMessage).HasMaxLength(500);
+        builder.Property(m => m.LatestParseOutcome).HasConversion<SnakeCaseEnumConverter<ParseOutcome>>().HasMaxLength(30);
+
+        // Feature 007's projection of the latest completed run; the run itself references the message with its owner.
+        builder.HasOne<MessageParseRun>().WithMany().HasForeignKey(m => m.LatestParseRunId).OnDelete(DeleteBehavior.Restrict);
 
         // JSON fields are stored as text exactly as supplied: jsonb would reorder them and rejects NUL characters.
 

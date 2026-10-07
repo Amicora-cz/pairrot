@@ -51,4 +51,7 @@ public static class BackgroundJobTypes
 
     /// <summary>List a provider instance's received messages to recover missed deliveries; the target is its sync state.</summary>
     public const string DiscoverInboundMessages = "discover_inbound_messages";
+
+    /// <summary>Parse a stored message into an incoming transaction; the target is the message.</summary>
+    public const string ParseInboundMessage = "parse_inbound_message";
 }

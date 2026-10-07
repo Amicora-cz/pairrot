@@ -218,7 +218,7 @@ public class InboundEmailTests(PairrotFixture fx)
             Assert.Equal(("resend_webhook", "svix_signature", body), (receipt.TransportKind, receipt.DeliveryEvidence, receipt.RawPayload));
             Assert.Equal((InboundContentMode.Deferred, emailId, "resend:to,cc,bcc"),
                 (message.ContentMode, message.ContentReference, message.RecipientEvidence));
-            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.TargetId == message.Id));
+            Assert.Equal(1, await db.BackgroundJobs.CountAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id));
             Assert.Equal((InboundSourceKind.Fixture, InboundEnvironment.Live), (message.SourceKind, message.Environment));
             Assert.Equal("Příchozí platba", message.Subject);
             Assert.Equal(DateTimeOffset.Parse("2026-10-07T07:00:00Z"), message.ReceivedAt);
@@ -264,7 +264,7 @@ public class InboundEmailTests(PairrotFixture fx)
             Assert.Equal((InboundRoutingState.AmbiguousRecipient, (Guid?)null), (ambiguous.RoutingState, ambiguous.TenantId));
 
             // Quarantined messages wait for an operator; nothing is retrieved yet.
-            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.TargetId == unknown.Id || j.TargetId == ambiguous.Id));
+            Assert.False(await db.BackgroundJobs.AnyAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == unknown.Id || j.TargetId == ambiguous.Id));
         });
 
         // Neither tenant can open a quarantined message or the other's message by ID.
@@ -511,7 +511,7 @@ public class InboundEmailTests(PairrotFixture fx)
         Assert.Contains("second worker", source.Str("text"));
         await fx.WithDbAsync(async db =>
         {
-            var job = await db.BackgroundJobs.SingleAsync(j => j.TargetId == Guid.Parse(messageId));
+            var job = await db.BackgroundJobs.SingleAsync(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == Guid.Parse(messageId));
             Assert.Equal((BackgroundJobState.Succeeded, 1), (job.State, job.Generation));
             Assert.Null(job.LeaseToken);
         });

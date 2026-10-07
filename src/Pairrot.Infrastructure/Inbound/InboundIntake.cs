@@ -7,6 +7,7 @@ using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
+using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Tenants;
 
 namespace Pairrot.Infrastructure.Inbound;
@@ -197,6 +198,8 @@ public class InboundIntake(
                 {
                     message.HoldReason = InboundHoldReason.RecipientMismatch;
                 }
+
+                ParseScheduling.AddFirstJob(jobs, message);
             }
         }
         else if (route.State == InboundRoutingState.Routed)

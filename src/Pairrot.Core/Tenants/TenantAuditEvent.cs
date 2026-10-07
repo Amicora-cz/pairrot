@@ -32,6 +32,7 @@ public static class AuditActions
     public const string BankConnectionArchived = "bank_connection.archived";
     public const string InboundMessageFetchRetried = "inbound_message.fetch_retried";
     public const string InboundMessageRouted = "inbound_message.routed";
+    public const string InboundMessageReprocessRequested = "inbound_message.reprocess_requested";
     public const string PaymentRequestCreated = "payment_request.created";
     public const string PaymentRequestUpdated = "payment_request.updated";
     public const string PaymentRequestCancelled = "payment_request.cancelled";

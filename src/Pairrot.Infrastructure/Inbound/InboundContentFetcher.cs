@@ -4,6 +4,7 @@ using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
+using Pairrot.Infrastructure.Transactions;
 
 namespace Pairrot.Infrastructure.Inbound;
 
@@ -112,6 +113,8 @@ public class InboundContentFetcher(
                 // Conflicting evidence never moves the message to another owner; it is held instead.
                 message!.HoldReason = InboundHoldReason.RecipientMismatch;
             }
+
+            ParseScheduling.AddFirstJob(jobs, message!);
 
             jobs.Succeed(job);
         }, ct);

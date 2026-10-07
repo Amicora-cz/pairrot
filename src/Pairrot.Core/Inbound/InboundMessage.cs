@@ -1,3 +1,5 @@
+using Pairrot.Core.Parsing;
+
 namespace Pairrot.Core.Inbound;
 
 /// <summary>
@@ -80,6 +82,12 @@ public class InboundMessage
     public string? FetchErrorMessage { get; set; }
     public DateTimeOffset? FetchErrorAt { get; set; }
 
+    /// <summary>The latest completed parse run (Feature 007), separate from routing and content states.</summary>
+    public Guid? LatestParseRunId { get; set; }
+
+    public ParseOutcome? LatestParseOutcome { get; set; }
+    public DateTimeOffset? ParsedAt { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -133,7 +141,7 @@ public enum InboundHoldReason
     RecipientMismatch,
 }
 
-/// <summary>Whether the source content is stored. Not whether it was parsed: that is a later feature.</summary>
+/// <summary>Whether the source content is stored. Not whether it was parsed: see <see cref="InboundMessage.LatestParseOutcome"/>.</summary>
 public enum InboundContentState
 {
     Pending,

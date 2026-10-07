@@ -8,6 +8,7 @@ using Pairrot.Infrastructure;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
+using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Users;
 
 // Administrative CLI. Root tenant setup, root keys, and user accounts are deliberately not HTTP endpoints.
@@ -48,6 +49,10 @@ const string Usage = """
                                                map (after fixing it). Routed emails never move.
       inbound retry-fetch <message-id>         Queue content retrieval again, e.g. after fixing
                                                provider credentials. The API's worker runs it.
+      inbound reprocess <message-id>           Queue parsing again with the installed bank profile,
+                                               e.g. after a parser fix or after reactivation.
+      inbound parse-pending                    Queue parsing of every eligible stored message that
+                                               was never parsed (the API also does this periodically).
       inbound sync                             Recovery-check state per provider instance: last
                                                attempt and success, covered-through, next due,
                                                discovered messages, errors, and coverage gaps.
@@ -89,6 +94,7 @@ var admin = services.GetRequiredService<RootTenantAdministration>();
 var userAdmin = services.GetRequiredService<UserAdministration>();
 var inboundAdmin = services.GetRequiredService<InboundAdministration>();
 var discovery = services.GetRequiredService<InboundDiscoveryService>();
+var transactions = services.GetRequiredService<IncomingTransactionService>();
 
 switch (args)
 {
@@ -318,6 +324,12 @@ switch (args)
             Console.WriteLine($"Retrieval    #{j.Generation} {Snake(j.State)}, {j.AttemptCount} attempt(s), by {j.RequestedBy}, due {j.DueAt:u}{error}");
         }
 
+        foreach (var run in await services.GetRequiredService<PairrotDbContext>().MessageParseRuns
+                     .Where(r => r.InboundMessageId == m.Id).OrderBy(r => r.JobGeneration).ToListAsync())
+        {
+            Console.WriteLine($"Parse        #{run.JobGeneration} {Snake(run.Outcome)} ({run.ReasonCode}: {run.ReasonMessage}) {run.BankProfile ?? "-"} {run.ParserVersion ?? ""}, trust {(run.TrustDecision is { } trust ? Snake(trust) : "-")}{(run.TransactionId is { } tx ? $", transaction {tx}" : "")}");
+        }
+
         return 0;
     }
 
@@ -330,6 +342,15 @@ switch (args)
         return Report(await inboundAdmin.RetryFetchAsync(messageId, operatorName), queued => queued.Created
             ? $"Queued retrieval job {queued.Job.Id} (generation {queued.Job.Generation})."
             : $"Retrieval job {queued.Job.Id} is already {Snake(queued.Job.State)}.");
+
+    case ["inbound", "reprocess", var idText, ..] when Guid.TryParse(idText, out var messageId):
+        return Report(await transactions.ReprocessAsOperatorAsync(messageId, Actor.Administrator(operatorName)), queued => queued.Created
+            ? $"Queued parse job {queued.Job.Id} (generation {queued.Job.Generation})."
+            : $"Parse job {queued.Job.Id} is already {Snake(queued.Job.State)}.");
+
+    case ["inbound", "parse-pending", ..]:
+        Console.WriteLine($"Queued {await services.GetRequiredService<ParseScheduling>().QueueUnparsedAsync()} message(s) for parsing.");
+        return 0;
 
     case ["inbound", "sync", "run", var instanceId, ..]:
         return Report(await discovery.RunNowAsync(instanceId, $"operator:{operatorName}"), queued => queued.Created

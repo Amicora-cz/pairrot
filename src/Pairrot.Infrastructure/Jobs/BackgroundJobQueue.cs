@@ -30,7 +30,7 @@ public sealed class BackgroundJobOptions
 }
 
 /// <summary>A claimed job. Results may only be saved through <see cref="BackgroundJobQueue.FinishAsync"/> with this lease.</summary>
-public sealed record JobLease(Guid JobId, string Type, Guid TargetId, int Generation, int AttemptCount, Guid Token);
+public sealed record JobLease(Guid JobId, string Type, Guid TargetId, int Generation, int AttemptCount, Guid Token, string Owner);
 
 /// <summary>
 /// The PostgreSQL job table: claiming with <c>FOR UPDATE SKIP LOCKED</c> and an expiring lease,
@@ -141,7 +141,7 @@ public class BackgroundJobQueue(PairrotDbContext db, TimeProvider time, IOptions
             """).AsNoTracking().ToListAsync(ct);
 
         return claimed is [var job]
-            ? new JobLease(job.Id, job.Type, job.TargetId, job.Generation, job.AttemptCount, token)
+            ? new JobLease(job.Id, job.Type, job.TargetId, job.Generation, job.AttemptCount, token, owner)
             : null;
     }
 

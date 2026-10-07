@@ -122,6 +122,10 @@ export interface InboundMessage {
   sender_authentication: SenderAuthentication
   content_error: ErrorAt | null
   source_available: boolean
+  /** Latest completed parse run (Feature 007); separate from the content state. */
+  latest_parse_run_id: string | null
+  latest_parse_outcome: ParseOutcome | null
+  parsed_at: string | null
   created_at: string
   updated_at: string
   /** Detail only; none for inline content. */
@@ -136,6 +140,100 @@ export interface InboundMessage {
     created_at: string
     completed_at: string | null
   }[]
+}
+
+export type ParseOutcome = 'parsed' | 'duplicate' | 'not_payment' | 'unsupported' | 'review_required' | 'failed'
+
+export interface ParseReason {
+  code: string
+  message: string
+}
+
+/** One parse attempt. `candidate` is what was extracted: under review it is a proposal, not a recorded receipt. */
+export interface ParseRun {
+  id: string
+  inbound_message_id: string
+  generation: number
+  source_sha256: string
+  bank_profile: string | null
+  parser_version: string | null
+  trust_decision: 'trusted' | 'untrusted' | null
+  trust: {
+    decision: string
+    reasons: ParseReason[]
+    evidence: {
+      from_address: string | null
+      from_domain: string | null
+      spf: string
+      dkim: string
+      dmarc: string
+      authentication_origin: string | null
+      source_kind: string
+      environment: string
+    }
+  } | null
+  outcome: ParseOutcome
+  reason_code: string
+  reason_message: string
+  reasons: ParseReason[]
+  template_id: string | null
+  source_part: 'text' | 'html' | null
+  candidate: {
+    amount: number | null
+    currency: string | null
+    variable_symbol: string | null
+    bank_reference: string | null
+    destination: string
+    sender_account: string | null
+    sender_name: string | null
+    message: string | null
+    booked_on: string | null
+    occurred_at: string | null
+    raw: Record<string, string | null>
+  } | null
+  transaction_id: string | null
+  requested_by: string
+  started_at: string
+  completed_at: string
+}
+
+export interface ParseHistory {
+  inbound_message_id: string
+  content_state: string
+  latest_outcome: ParseOutcome | null
+  runs: ParseRun[]
+  jobs: NonNullable<InboundMessage['retrievals']>
+}
+
+export type IngestionStatus = 'accepted' | 'review_required' | 'disputed'
+
+/**
+ * A bank movement recorded from notifications. Not a paid reservation: matching comes later, and
+ * only `accepted` records with `live` evidence will ever count as money.
+ */
+export interface IncomingTransaction {
+  id: string
+  tenant_id: string
+  bank_connection_id: string
+  amount: number
+  currency: string
+  variable_symbol: string | null
+  bank_transaction_id: string | null
+  sender_account: string | null
+  sender_name: string | null
+  message: string | null
+  booked_on: string
+  occurred_at: string | null
+  received_at: string
+  bank_profile: string
+  parser_version: string
+  ingestion_status: IngestionStatus
+  ingestion_reasons: { code: string; message: string; parse_run_id: string | null; at: string }[]
+  evidence: 'live' | 'test' | 'fixture'
+  created_at: string
+  updated_at: string
+  /** Detail only. */
+  sources?: { inbound_message_id: string; parse_run_id: string; linked_at: string }[]
 }
 
 /** Stored common source. `html` is the email's HTML as text: display it escaped, never render it. */
