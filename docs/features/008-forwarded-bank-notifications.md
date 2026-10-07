@@ -211,4 +211,4 @@ A retention job deletes expired foreign metadata and confirmation content, and r
 
 Forwarding support is complete for a mail provider only when its real samples are recorded and the evidence that authenticates its forwarder is documented. A provider whose forwards cannot be authenticated by SPF, verified ARC, DKIM, or bank DMARC stays unverified, and its forwarded notifications require review until then. Manual forwards depend only on DMARC for the tenant's own mailbox domain, so they work for any provider whose domain publishes and passes DMARC.
 
-Matching expected payments with incoming transactions, and manual resolution of reviewable candidates, follow in a later feature.
+Matching expected payments with incoming transactions, and manual resolution of reviewable candidates, follow in [Feature 009](./009-payment-matching-and-review.md).

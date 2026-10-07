@@ -193,4 +193,4 @@ No allocation table, paid-amount update, or outgoing customer webhook is added b
 
 The selected bank is Česká spořitelna; the remaining external input is its actual notification samples and authentication evidence. This is needed to finish the concrete bank profile, not a reason to invent one.
 
-After Feature 007, Pairrot has expected payments and separately recorded incoming transactions. [Feature 008](./008-forwarded-bank-notifications.md) adds forwarded notifications and protection against foreign mail; a later feature matches them and handles manual resolution. Payment-status delivery to NaLekci follows in its own feature. Campaigns remain disabled.
+After Feature 007, Pairrot has expected payments and separately recorded incoming transactions. [Feature 008](./008-forwarded-bank-notifications.md) adds forwarded notifications and protection against foreign mail. [Feature 009](./009-payment-matching-and-review.md) matches payments and handles manual resolution, including atomic allocation corrections when transaction eligibility changes. Payment-status delivery to NaLekci follows in Feature 010. Campaigns remain disabled.

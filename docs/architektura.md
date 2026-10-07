@@ -16,8 +16,11 @@ Další navržené kroky:
 - [Feature 006](./features/006-inbound-email-reception.md): společné rozhraní pro příjem e-mailů, Resend jako první živý poskytovatel, ověřený webhook, uložení zprávy a spolehlivé stahování obsahu na pozadí. Později lze přidat vlastní SMTP server nebo jinou službu.
 - [Feature 007](./features/007-bank-message-parsing.md): zpracování notifikací České spořitelny do transakcí, ověření původu, duplicity a opakované zpracování.
 - [Feature 008](./features/008-forwarded-bank-notifications.md): přeposlané notifikace z vlastní schránky lektora (ČS umí jen jeden kontaktní e-mail), třídění odesílatelů před stažením obsahu, neukládání cizí pošty a pozastavení adresy při přeposílání cizích e-mailů.
+- [Feature 009](./features/009-payment-matching-and-review.md): přesné automatické párování, ruční přiřazení částečných plateb a přeplatků, řešení duplicit a oprav, výpočet úhrady a trvalá historie změn.
+- [Feature 010](./features/010-payment-status-webhooks.md): podepsané webhooky se změnami úhrady do NaLekci, signing secrets, odběr událostí přímých subtenantů, historie doručení a ruční opakování.
+- [Feature 011](./features/011-webhook-delivery-retries.md): tři automatická opakování neúspěšného webhooku po 5 sekundách, 60 sekundách a 1 hodině; nejvýše čtyři pokusy včetně prvního, uložené v databázi.
 
-Pro 005–007 zůstává lokální PostgreSQL v Dockeru a lokální SPA. Feature 006 přidává skutečný Resend jako volitelně zapnutý režim vedle stubu; živé ověření potřebuje nastavenou příjmovou doménu a dostupný HTTPS webhook. Párování očekávaných plateb s transakcemi a oznámení výsledků NaLekci přijdou po těchto krocích.
+Pro 005–011 zůstává lokální PostgreSQL v Dockeru a lokální SPA. Feature 006 přidává skutečný Resend jako volitelně zapnutý režim vedle stubu; živé ověření potřebuje nastavenou příjmovou doménu a dostupný HTTPS webhook. Features 010 a 011 lze lokálně ověřit proti testovacímu příjemci bez Resendu.
 
 ## Základní uspořádání
 

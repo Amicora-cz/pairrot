@@ -143,6 +143,6 @@ Verify at least:
 
 ## 8. Boundary with the next features
 
-Feature 005 produces expected payments. Feature 006 produces stored inbound messages. Feature 007 produces normalized incoming transactions. None of these three performs matching; Feature 008 will connect requests to transactions and compute actual paid amounts.
+Feature 005 produces expected payments. Feature 006 produces stored inbound messages. Feature 007 produces normalized incoming transactions, and Feature 008 adds forwarded notifications. [Feature 009](./009-payment-matching-and-review.md) connects requests to transactions, computes actual paid amounts, and handles manual review and corrections.
 
 Campaigns, billing, automatic VS generation, allocations, reminders, payment-status webhooks, and production frontend deployment remain deferred.
