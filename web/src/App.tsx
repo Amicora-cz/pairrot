@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, refreshAntiforgery, setAuthErrorListener, setExpectedTenant, type SessionSummary } from './api'
 import { Account } from './views/Account'
+import { Attention } from './views/Attention'
 import { ApiKeys } from './views/ApiKeys'
 import { BankSettings } from './views/BankSettings'
 import { Configuration } from './views/Configuration'
@@ -15,7 +16,19 @@ import { Transactions } from './views/Transactions'
 import { Webhooks } from './views/Webhooks'
 import { StatusBadge } from './components'
 
-type Tab = 'configuration' | 'bank' | 'payments' | 'inbound' | 'transactions' | 'review' | 'webhooks' | 'keys' | 'subtenants' | 'history' | 'account'
+type Tab =
+  | 'configuration'
+  | 'attention'
+  | 'bank'
+  | 'payments'
+  | 'inbound'
+  | 'transactions'
+  | 'review'
+  | 'webhooks'
+  | 'keys'
+  | 'subtenants'
+  | 'history'
+  | 'account'
 
 // Background polling only detects expiry; it is marked so it does not keep the session alive.
 const POLL_MS = 60_000
@@ -136,6 +149,7 @@ export default function App() {
             {(
               [
                 ['configuration', 'Configuration'],
+                ['attention', 'Attention'],
                 ['bank', 'Bank settings'],
                 ['payments', 'Expected payments'],
                 ['inbound', 'Inbound emails'],
@@ -159,6 +173,7 @@ export default function App() {
           {/* Keyed by tenant: switching tenants unmounts the views and clears their data and one-time secrets. */}
           <main key={selected.tenant.id}>
             {activeTab === 'configuration' && <Configuration onChanged={loadSession} />}
+            {activeTab === 'attention' && <Attention owner={selected.tenant} canManageChildren={canManageChildren} />}
             {activeTab === 'bank' && <BankSettings key={selected.tenant.id} basePath="/v1/tenant/bank-connections" owner={selected.tenant} />}
             {activeTab === 'payments' && <ExpectedPayments prefix="/v1/tenant" owner={selected.tenant} readOnly={selected.blocked} />}
             {activeTab === 'inbound' && <InboundMessages prefix="/v1/tenant" owner={selected.tenant} readOnly={selected.blocked} />}

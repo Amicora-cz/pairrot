@@ -6,7 +6,9 @@ Status: proposed.
 
 Pairrot has one bank profile (Česká spořitelna, Feature 007) and no way for an integrator to learn that before an instructor reconfigures their internet banking. A connection for another bank receives an address, but Feature 008 may classify its mail as foreign before parsing because no bank sender profile exists. Whether payments will be recognized is spread over `address_status`, `reception`, forwarding setup and parse outcomes.
 
-This feature publishes the bank catalog and a deterministic reception-readiness evaluator per connection. It adds no parser. Feature 016 persists the evaluator's projection to detect and publish changes; the two features share one definition of readiness.
+This feature publishes the bank catalog and a deterministic reception-readiness evaluator per connection. It adds no parser. It also persists the evaluator's projection to detect and publish changes as `bank_connection.reception_changed`, and adds the `reception_not_ready` and `unsupported_messages` attention kinds; those parts were moved here from [Feature 016](./016-attention-events-and-parent-attention-list.md#6-moved-to-feature-015), whose event and subscription mechanism they use.
+
+Deferred: with a single supported bank, the catalog and readiness are not needed yet. Feature 016 was implemented without them.
 
 ## 1. Bank catalog
 
@@ -84,7 +86,7 @@ Independent `warnings`, in stable code order, are `unsupported_messages_received
 | Old unsupported message followed by a trusted parsed incoming payment | `ready` with historical warning |
 | Latest relevant completed result is untrusted/unsupported | `not_ready` until superseded by a successful result |
 
-The evaluator is pure and reusable; reads do not write events. With Feature 016 installed, reads use its persisted projection and return its actual `checked_at`. State, blocking reasons and warning changes are reported as `bank_connection.reception_changed` by the transition mechanism defined there.
+The evaluator is pure and reusable; reads do not write events. Reads use the persisted projection and return its actual `checked_at`. State, blocking reasons and warning changes are reported as `bank_connection.reception_changed` by the transition mechanism in [Feature 016, section 6](./016-attention-events-and-parent-attention-list.md#6-moved-to-feature-015).
 
 `reception` also gains 30-day counters: `trusted_message_count`, `untrusted_message_count`, `unsupported_message_count`, and `latest_unsupported_at`, so an integrator can distinguish "nothing arrives" from "it arrives and we cannot read it".
 

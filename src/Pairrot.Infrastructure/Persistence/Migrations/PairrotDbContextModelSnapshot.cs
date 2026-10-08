@@ -1784,6 +1784,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
                         .HasName("ak_payment_requests_id_tenant_id_bank_connection_id");
 
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("payment_requests_overpaid_idx")
+                        .HasFilter("paid_amount > amount");
+
                     b.HasIndex("BankAccountId", "VariableSymbolKey")
                         .IsUnique()
                         .HasDatabaseName("payment_requests_account_variable_symbol_unique");
@@ -2374,6 +2378,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("BankConnectionId", "Id")
                         .HasDatabaseName("incoming_transactions_connection_idx");
+
+                    b.HasIndex("TenantId", "CreatedAt")
+                        .HasDatabaseName("incoming_transactions_unallocated_idx")
+                        .HasFilter("handling = 'unallocated'");
 
                     b.HasIndex("TenantId", "Id")
                         .HasDatabaseName("incoming_transactions_tenant_idx");
@@ -3063,6 +3071,13 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("erased_at");
 
+                    b.PrimitiveCollection<string[]>("EventTypes")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("event_types")
+                        .HasDefaultValueSql("ARRAY['payment_request.updated']::text[]");
+
                     b.Property<DateTimeOffset?>("LastSuccessAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_success_at");
@@ -3116,6 +3131,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("webhook_endpoints_erasure_consistent", "(erased_at IS NULL AND url IS NOT NULL) OR (erased_at IS NOT NULL AND url IS NULL AND state = 'paused')");
 
+                            t.HasCheckConstraint("webhook_endpoints_event_types_valid", "cardinality(event_types) >= 1 AND event_types <@ ARRAY['payment_request.updated', 'transaction.recorded', 'transaction.updated', 'review_case.opened', 'review_case.updated', 'inbound_address.paused', 'inbound_address.resumed']::text[]");
+
                             t.HasCheckConstraint("webhook_endpoints_scope_valid", "scope IN ('own', 'own_and_direct_children')");
 
                             t.HasCheckConstraint("webhook_endpoints_state_valid", "state IN ('paused', 'active')");
@@ -3168,6 +3185,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("sequence");
 
+                    b.Property<Guid?>("SubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subject_id");
+
                     b.Property<bool>("Synthetic")
                         .HasColumnType("boolean")
                         .HasColumnName("synthetic");
@@ -3193,8 +3214,16 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("PaymentRequestId", "Sequence")
                         .HasDatabaseName("webhook_events_request_idx");
 
+                    b.HasIndex("SubjectId", "Sequence")
+                        .IsUnique()
+                        .HasDatabaseName("webhook_events_subject_sequence_unique")
+                        .HasFilter("subject_id IS NOT NULL");
+
                     b.HasIndex("TenantId", "CreatedAt")
                         .HasDatabaseName("webhook_events_tenant_time_idx");
+
+                    b.HasIndex("Type", "Id")
+                        .HasDatabaseName("webhook_events_type_idx");
 
                     b.ToTable("webhook_events", null, t =>
                         {
@@ -3202,7 +3231,7 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("webhook_events_environment_valid", "environment IN ('test', 'live')");
 
-                            t.HasCheckConstraint("webhook_events_kind_consistent", "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND sequence IS NULL AND environment = 'test') OR (NOT synthetic AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND sequence IS NOT NULL)");
+                            t.HasCheckConstraint("webhook_events_kind_consistent", "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND subject_id IS NULL AND sequence IS NULL AND environment = 'test') OR (NOT synthetic AND type = 'payment_request.updated' AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND subject_id = payment_request_id AND sequence IS NOT NULL) OR (NOT synthetic AND type <> 'payment_request.updated' AND payment_change_id IS NULL AND payment_request_id IS NULL AND subject_id IS NOT NULL AND sequence >= 1)");
 
                             t.HasCheckConstraint("webhook_events_payload_consistent", "(body IS NULL) = (payload_erased_at IS NOT NULL)");
                         });

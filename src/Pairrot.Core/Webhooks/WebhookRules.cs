@@ -232,11 +232,44 @@ public static class WebhookDestinations
     }
 }
 
-/// <summary>The <c>payment_request.updated</c> body, built once from a committed payment change.</summary>
+/// <summary>Event bodies, built once when the change commits: <c>payment_request.updated</c> and Feature 016's types.</summary>
 public static class WebhookEvents
 {
     public const string PaymentRequestUpdated = "payment_request.updated";
+    public const string TransactionRecorded = "transaction.recorded";
+    public const string TransactionUpdated = "transaction.updated";
+    public const string ReviewCaseOpened = "review_case.opened";
+    public const string ReviewCaseUpdated = "review_case.updated";
+    public const string InboundAddressPaused = "inbound_address.paused";
+    public const string InboundAddressResumed = "inbound_address.resumed";
     public const string Test = "webhook.test";
+
+    /// <summary>The types an endpoint can subscribe to, in documentation order.</summary>
+    public static readonly IReadOnlyList<string> Subscribable =
+    [
+        PaymentRequestUpdated, TransactionRecorded, TransactionUpdated, ReviewCaseOpened, ReviewCaseUpdated,
+        InboundAddressPaused, InboundAddressResumed,
+    ];
+
+    /// <summary>
+    /// Validated, deduplicated, and sorted event types, or an error message. At least one is
+    /// required; <c>webhook.test</c> is implicit and cannot be listed.
+    /// </summary>
+    public static (string[]? Types, string? Error) ParseTypes(IReadOnlyList<string?> values)
+    {
+        if (values.Count == 0)
+        {
+            return (null, "event_types must list at least one event type.");
+        }
+
+        if (values.Any(v => v is null || !Subscribable.Contains(v)))
+        {
+            var unknown = values.First(v => v is null || !Subscribable.Contains(v));
+            return (null, $"event_types contains an unknown type ({unknown ?? "null"}); known: {string.Join(", ", Subscribable)}.");
+        }
+
+        return (values.OfType<string>().Distinct().Order(StringComparer.Ordinal).ToArray(), null);
+    }
     public const int SchemaVersion = 1;
     public const int MaxBodyBytes = 64 * 1024;
 
@@ -298,6 +331,7 @@ public static class WebhookEvents
             TenantId = change.TenantId,
             PaymentChangeId = change.Id,
             PaymentRequestId = change.PaymentRequestId,
+            SubjectId = change.PaymentRequestId,
             Sequence = change.Sequence,
             Environment = EnvironmentOf(change),
             Body = ownerErased ? null : body,
@@ -305,6 +339,37 @@ public static class WebhookEvents
             CreatedAt = change.CreatedAt,
             PayloadErasedAt = ownerErased ? change.CreatedAt : null,
         };
+    }
+
+    /// <summary>Feature 016's fixed cause vocabulary, documented in the receiver guide.</summary>
+    public static class Causes
+    {
+        /// <summary>The first event of a transaction: its first matching attempt completed, or it needs review.</summary>
+        public const string Recorded = "recorded";
+
+        public const string Allocated = "allocated";
+        public const string Revoked = "revoked";
+        public const string Ignored = "ignored";
+        public const string Restored = "restored";
+        public const string AutoMatchingEnabled = "auto_matching_enabled";
+        public const string ReviewRequired = "review_required";
+
+        /// <summary>A review decision confirmed the transaction or made it allocatable again.</summary>
+        public const string ReviewDecided = "review_decided";
+
+        public const string MarkedDuplicate = "marked_duplicate";
+        public const string Rejected = "rejected";
+        public const string Rematched = "rematched";
+
+        public const string Opened = "opened";
+        public const string MemberAdded = "member_added";
+        public const string EvidenceChanged = "evidence_changed";
+        public const string Resolved = "resolved";
+        public const string Reopened = "reopened";
+
+        public const string ForeignMailLimit = "foreign_mail_limit";
+        public const string ResumedByTenant = "resumed_by_tenant";
+        public const string ResumedByOperator = "resumed_by_operator";
     }
 
     public static string TestBody(Guid eventId, Guid tenantId, DateTimeOffset createdAt) => JsonSerializer.Serialize(new
@@ -317,6 +382,37 @@ public static class WebhookEvents
         tenant_id = tenantId,
         data = new { synthetic = true, message = "A test delivery from Pairrot. Do not update any reservation." },
     }, Json);
+
+    /// <summary>
+    /// A Feature 016 event of <paramref name="subjectId"/>: the envelope of Feature 010 and
+    /// <paramref name="data"/>, which starts with <c>subject_id</c>, <c>sequence</c>, and <c>cause</c>.
+    /// </summary>
+    public static WebhookEvent ForSubject(
+        Guid id, string type, Guid tenantId, Guid subjectId, int sequence, InboundEnvironment environment, DateTimeOffset createdAt, object data)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            id,
+            type,
+            schema_version = SchemaVersion,
+            created_at = createdAt.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFF'Z'", CultureInfo.InvariantCulture),
+            environment = environment == InboundEnvironment.Live ? "live" : "test",
+            tenant_id = tenantId,
+            data,
+        }, Json);
+        return new WebhookEvent
+        {
+            Id = id,
+            Type = type,
+            TenantId = tenantId,
+            SubjectId = subjectId,
+            Sequence = sequence,
+            Environment = environment,
+            Body = body,
+            BodySha256 = Sha256(body),
+            CreatedAt = createdAt,
+        };
+    }
 
     public static string Sha256(string body) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
 

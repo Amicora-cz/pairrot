@@ -39,7 +39,7 @@ Both ways are audited (`forwarding_source.verified` with the method). An operato
 ## 3. Trust and readiness
 
 - Feature 008's source-dependent validity table applies only to `active` sources. A forward attributed to a pending source that does not itself pass inbound proof is untrusted with `forwarding_source_unverified`; its local review case names the source. Bank-authenticated mail remains eligible through Feature 008's bank-origin path independently of a forwarding-source claim; inability to attribute an automatic forward is not evidence of source ownership.
-- Readiness follows Feature 015: pending sources block only when there is no successful trusted parsed incoming payment through a currently usable path. A pending additional source is a warning on an otherwise ready connection. Ordinary verification mail cannot satisfy payment-processing proof.
+- Readiness follows Feature 015 (deferred; this rule applies once it is built): pending sources block only when there is no successful trusted parsed incoming payment through a currently usable path. A pending additional source is a warning on an otherwise ready connection. Ordinary verification mail cannot satisfy payment-processing proof.
 - Resolving such a review case by `confirm_payment` remains a business decision and does not verify the source.
 
 ## 4. Seznam and the forwarding-evidence table

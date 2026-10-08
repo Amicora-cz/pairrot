@@ -33,6 +33,12 @@ public class WebhookEndpoint
 
     /// <summary>Feature 014: disabled for good with its erased tenant; the URL and the secrets are gone.</summary>
     public DateTimeOffset? ErasedAt { get; set; }
+
+    /// <summary>
+    /// Feature 016: the event types routed to the endpoint, sorted. A change applies to events
+    /// recorded after it; <c>webhook.test</c> is always deliverable.
+    /// </summary>
+    public string[] EventTypes { get; set; } = [WebhookEvents.PaymentRequestUpdated];
 }
 
 public enum WebhookScope
@@ -93,8 +99,9 @@ public enum WebhookKeyState
 }
 
 /// <summary>
-/// The immutable serialized event. A real event has the ID of the Feature 009 payment change it
-/// describes; retries and replays send exactly these bytes, never a rebuilt body.
+/// The immutable serialized event. A payment event has the ID of the Feature 009 payment change it
+/// describes; the Feature 016 events describe a transaction, review case, or inbound address.
+/// Retries and replays send exactly these bytes, never a rebuilt body.
 /// </summary>
 public class WebhookEvent
 {
@@ -107,6 +114,10 @@ public class WebhookEvent
 
     public Guid? PaymentChangeId { get; set; }
     public Guid? PaymentRequestId { get; set; }
+
+    /// <summary>The record the event describes; <see cref="Sequence"/> increases per subject. <c>null</c> for a test probe.</summary>
+    public Guid? SubjectId { get; set; }
+
     public int? Sequence { get; set; }
     public InboundEnvironment Environment { get; set; }
 
@@ -138,7 +149,7 @@ public class WebhookDelivery
     /// <summary>The endpoint's owner.</summary>
     public Guid SubscriberTenantId { get; set; }
 
-    /// <summary>The event's payment owner: the subscriber itself or a direct child.</summary>
+    /// <summary>The event's owner: the subscriber itself or a direct child.</summary>
     public Guid OwnerTenantId { get; set; }
 
     /// <summary>The destination this generation is bound to.</summary>

@@ -153,6 +153,11 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
 
         builder.HasIndex(t => new { t.BankAccountId, t.ComparisonFingerprint }).HasDatabaseName("incoming_transactions_account_fingerprint_idx");
         builder.HasIndex(t => new { t.TenantId, t.Id }).HasDatabaseName("incoming_transactions_tenant_idx");
+
+        // Feature 016: unmatched receipts in the attention list.
+        builder.HasIndex(t => new { t.TenantId, t.CreatedAt })
+            .HasFilter("handling = 'unallocated'")
+            .HasDatabaseName("incoming_transactions_unallocated_idx");
         builder.HasIndex(t => new { t.BankConnectionId, t.Id }).HasDatabaseName("incoming_transactions_connection_idx");
         builder.HasIndex(t => new { t.BankAccountId, t.VariableSymbolKey })
             .HasFilter("handling = 'unallocated'")

@@ -379,3 +379,15 @@ pre.source {
 .badge-overpaid {
   background: #e9d5ff;
 }
+
+/* Feature 16: event-type subscription checkboxes, one per line. */
+fieldset.event-types {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+
+fieldset.event-types label.inline {
+  display: block;
+  margin: 0.15rem 0;
+}

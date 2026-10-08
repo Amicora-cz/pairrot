@@ -121,4 +121,33 @@ public class WebhookRulesTests
     {
         Assert.Equal(outcome, WebhookRetryPolicy.Classify(status));
     }
+
+    [Fact] // Feature 016
+    public void Event_types_are_validated_deduplicated_and_sorted()
+    {
+        Assert.Equal(["payment_request.updated", "transaction.recorded"],
+            WebhookEvents.ParseTypes(["transaction.recorded", "payment_request.updated", "transaction.recorded"]).Types!);
+        Assert.NotNull(WebhookEvents.ParseTypes([]).Error);
+        Assert.NotNull(WebhookEvents.ParseTypes(["webhook.test"]).Error);
+        Assert.NotNull(WebhookEvents.ParseTypes(["bank_connection.reception_changed"]).Error);
+        Assert.NotNull(WebhookEvents.ParseTypes([null]).Error);
+    }
+
+    [Fact] // Feature 016
+    public void A_subject_event_has_the_feature_010_envelope_and_its_digest()
+    {
+        var id = Guid.Parse("01900000-0000-7000-8000-0000000000bb");
+        var subject = Guid.Parse("01900000-0000-7000-8000-0000000000cc");
+        var tenant = Guid.Parse("01900000-0000-7000-8000-0000000000dd");
+        var ev = WebhookEvents.ForSubject(id, WebhookEvents.InboundAddressPaused, tenant, subject, 3, Core.Inbound.InboundEnvironment.Live,
+            DateTimeOffset.Parse("2026-10-08T09:12:00.5Z"), new { subject_id = subject, sequence = 3, cause = WebhookEvents.Causes.ForeignMailLimit });
+
+        Assert.Equal(
+            "{\"id\":\"01900000-0000-7000-8000-0000000000bb\",\"type\":\"inbound_address.paused\",\"schema_version\":1,"
+            + "\"created_at\":\"2026-10-08T09:12:00.5Z\",\"environment\":\"live\",\"tenant_id\":\"01900000-0000-7000-8000-0000000000dd\","
+            + "\"data\":{\"subject_id\":\"01900000-0000-7000-8000-0000000000cc\",\"sequence\":3,\"cause\":\"foreign_mail_limit\"}}",
+            ev.Body);
+        Assert.Equal((subject, 3, WebhookEvents.Sha256(ev.Body!)), (ev.SubjectId!.Value, ev.Sequence!.Value, ev.BodySha256));
+        Assert.Null(ev.PaymentChangeId);
+    }
 }

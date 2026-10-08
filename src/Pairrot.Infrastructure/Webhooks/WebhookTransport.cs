@@ -79,33 +79,39 @@ public class WebhookRouter(PairrotDbContext db)
 {
     public async Task RouteAsync(PaymentChange change, CancellationToken ct)
     {
-        var environment = WebhookEvents.EnvironmentOf(change);
-
         // Feature 014: an erased owner's change gets an event without a body and nothing to send.
         var erased = await Erasure.DataBarrier.IsClosedAsync(db, change.TenantId, ct);
-        db.WebhookEvents.Add(WebhookEvents.ForChange(change, erased));
-        if (erased)
+        var ev = WebhookEvents.ForChange(change, erased);
+        db.WebhookEvents.Add(ev);
+        if (!erased)
         {
-            return;
+            await DeliverAsync(db, ev, ct);
         }
+    }
 
+    /// <summary>
+    /// A delivery of a new event (already added to the context) for each endpoint that subscribes
+    /// to its type now: the owner's, and its parent's when that one includes direct children.
+    /// </summary>
+    public static async Task DeliverAsync(PairrotDbContext db, WebhookEvent ev, CancellationToken ct)
+    {
         var owner = await db.Tenants.AsNoTracking()
-            .Where(t => t.Id == change.TenantId)
+            .Where(t => t.Id == ev.TenantId)
             .Select(t => new { t.ParentTenantId, ParentCanManage = t.ParentTenant != null && t.ParentTenant.CanCreateSubtenants })
             .SingleAsync(ct);
-        foreach (var subscriber in new[] { change.TenantId, owner.ParentTenantId }.OfType<Guid>().Order())
+        foreach (var subscriber in new[] { ev.TenantId, owner.ParentTenantId }.OfType<Guid>().Order())
         {
             await LockSharedAsync(db, subscriber, ct);
         }
 
         var parentId = owner.ParentCanManage ? owner.ParentTenantId : null;
         var endpoints = await db.WebhookEndpoints.AsNoTracking()
-            .Where(e => e.Environment == environment
-                && (e.TenantId == change.TenantId || (e.TenantId == parentId && e.Scope == WebhookScope.OwnAndDirectChildren)))
+            .Where(e => e.Environment == ev.Environment && e.EventTypes.Contains(ev.Type)
+                && (e.TenantId == ev.TenantId || (e.TenantId == parentId && e.Scope == WebhookScope.OwnAndDirectChildren)))
             .ToListAsync(ct);
         foreach (var endpoint in endpoints)
         {
-            db.WebhookDeliveries.Add(NewDelivery(change.Id, endpoint, change.TenantId, change.CreatedAt));
+            db.WebhookDeliveries.Add(NewDelivery(ev.Id, endpoint, ev.TenantId, ev.CreatedAt));
         }
     }
 

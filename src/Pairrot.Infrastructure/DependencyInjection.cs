@@ -30,7 +30,13 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException(
                 $"Connection string '{ConnectionStringName}' is not configured (ConnectionStrings__{ConnectionStringName}).");
 
-        services.AddDbContext<PairrotDbContext>(options => ConfigureDbContext(options, connectionString));
+        // Feature 016: every save records the events of the transactions, review cases, and addresses it changes.
+        services.AddSingleton<SubjectEventInterceptor>();
+        services.AddDbContext<PairrotDbContext>((sp, options) =>
+        {
+            ConfigureDbContext(options, connectionString);
+            options.AddInterceptors(sp.GetRequiredService<SubjectEventInterceptor>());
+        });
         services.AddSingleton(TimeProvider.System);
 
         // Cookie-protection keys and webhook signing secrets use one key ring in PostgreSQL, so both survive restarts.
@@ -141,6 +147,7 @@ public static class DependencyInjection
         services.AddScoped<WebhookDeliveryWorker>();
         services.AddScoped<WebhookMaintenance>();
         services.AddScoped<WebhookService>();
+        services.AddScoped<AttentionService>();
 
         // Feature 014: tenant erasure and payer-data retention.
         services.Configure<ErasureOptions>(configuration.GetSection(ErasureOptions.Section));

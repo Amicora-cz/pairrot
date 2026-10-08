@@ -23,8 +23,8 @@ public static class PaymentWebhookEndpoints
 {
     private const string SubtenantRouteValue = "subtenantId";
 
-    private static readonly HashSet<string> CreateFields = ["url", "scope", "environment"];
-    private static readonly HashSet<string> UpdateFields = ["url", "scope", "state"];
+    private static readonly HashSet<string> CreateFields = ["url", "scope", "environment", "event_types"];
+    private static readonly HashSet<string> UpdateFields = ["url", "scope", "state", "event_types"];
     private static readonly HashSet<string> RotateFields = ["expected_version", "grace_period_seconds", "revoke_retiring"];
     private static readonly HashSet<string> DeliveryFields = ["expected_version", "reason"];
     private static readonly HashSet<string> ReplayFields = ["event_ids", "expected_destination_revision", "reason"];
@@ -38,11 +38,18 @@ public static class PaymentWebhookEndpoints
     public static void MapSubtenantWebhooks(this RouteGroupBuilder subtenantGroup) =>
         Map(subtenantGroup.MapGroup($"/{{{SubtenantRouteValue}:guid}}"), Authority.Child);
 
-    /// <summary><c>/v1/management</c>: the caller's own endpoint with management authority over its children.</summary>
-    public static void MapManagementEndpoints(this IEndpointRouteBuilder app) =>
-        Map(app.MapGroup("/v1/management")
+    /// <summary>
+    /// <c>/v1/management</c>: the caller's own endpoint with management authority over its
+    /// children, and the attention list over them (Feature 016).
+    /// </summary>
+    public static void MapManagementEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/v1/management")
             .RequireAuthorization(PairrotClaims.Policies.TenantManagement)
-            .AddEndpointFilter<TenantContextFilter>(), Authority.Management);
+            .AddEndpointFilter<TenantContextFilter>();
+        Map(group, Authority.Management);
+        group.MapAttention(managesChildren: true);
+    }
 
     private enum Authority
     {
@@ -91,9 +98,19 @@ public static class PaymentWebhookEndpoints
 
         if (!body.TryGetString("url", out var url, out error)
             || !body.TryGetString("scope", out var scopeText, out error)
-            || !body.TryGetString("environment", out var environmentText, out error))
+            || !body.TryGetString("environment", out var environmentText, out error)
+            || !body.TryGetStringList("event_types", out var typesValue, out error))
         {
             return error!;
+        }
+
+        string[]? eventTypes = null;
+        if (typesValue.HasValue)
+        {
+            if (EventTypesError(typesValue.Value!, out eventTypes) is { } typesError)
+            {
+                return typesError;
+            }
         }
 
         var scope = WebhookScope.Own;
@@ -108,13 +125,14 @@ public static class PaymentWebhookEndpoints
         }
 
         var environment = environmentText.Value == "live" ? InboundEnvironment.Live : InboundEnvironment.Test;
-        if (!MatchingEndpoints.TryCommand(http, caller.Actor, "webhook_create", out var command, out error, caller.SubtenantId, url.Value, scopeText.Value, environmentText.Value))
+        if (!MatchingEndpoints.TryCommand(http, caller.Actor, "webhook_create", out var command, out error, caller.SubtenantId, url.Value, scopeText.Value,
+                environmentText.Value, eventTypes))
         {
             return error!;
         }
 
         http.Response.Headers.CacheControl = "no-store";
-        return MatchingEndpoints.ToResult(http, await webhooks.CreateAsync(caller, url.Value, scope, environment, command!,
+        return MatchingEndpoints.ToResult(http, await webhooks.CreateAsync(caller, url.Value, scope, environment, eventTypes, command!,
             view => WebhookEndpointResponse.From(view), reveal => SignedEndpointResponse.From(reveal), ct));
     }
 
@@ -141,12 +159,22 @@ public static class PaymentWebhookEndpoints
 
         if (!body.TryGetString("url", out var url, out error)
             || !body.TryGetString("scope", out var scopeText, out error)
-            || !body.TryGetString("state", out var stateText, out error))
+            || !body.TryGetString("state", out var stateText, out error)
+            || !body.TryGetStringList("event_types", out var typesValue, out error))
         {
             return error!;
         }
 
         var change = new EndpointChange();
+        if (typesValue.HasValue)
+        {
+            if (EventTypesError(typesValue.Value!, out var eventTypes) is { } typesError)
+            {
+                return typesError;
+            }
+
+            change = change with { EventTypes = eventTypes! };
+        }
         if (url.HasValue)
         {
             change = change with { Url = url.Value };
@@ -279,6 +307,16 @@ public static class PaymentWebhookEndpoints
             filter = filter with { PaymentRequestId = request };
         }
 
+        if (query.TryGetValue("type", out var typeValue))
+        {
+            if (TypeFilterError(typeValue.ToString()) is { } typeError)
+            {
+                return typeError;
+            }
+
+            filter = filter with { Type = typeValue.ToString() };
+        }
+
         foreach (var name in new[] { "from", "to" })
         {
             if (query.TryGetValue(name, out var value))
@@ -317,7 +355,18 @@ public static class PaymentWebhookEndpoints
             state = parsed;
         }
 
-        var result = await webhooks.ListDeliveriesAsync(caller, state, limit, cursor, ct);
+        string? type = null;
+        if (query.TryGetValue("type", out var typeValue))
+        {
+            if (TypeFilterError(typeValue.ToString()) is { } typeError)
+            {
+                return typeError;
+            }
+
+            type = typeValue.ToString();
+        }
+
+        var result = await webhooks.ListDeliveriesAsync(caller, state, limit, cursor, ct, type);
         return result.Error is { } failure
             ? ApiErrors.From(failure)
             : Results.Ok(new ListResponse<WebhookDeliveryResponse>(result.Value!.Items.Select(WebhookDeliveryResponse.From).ToList(), result.Value.NextCursor));
@@ -349,6 +398,18 @@ public static class PaymentWebhookEndpoints
         return MatchingEndpoints.ToResult(http, await run(caller, id, version, reason.Value, command!,
             view => WebhookDeliveryDetailResponse.From(view), ct));
     }
+
+    /// <summary>Feature 016: a subscription list, validated and sorted.</summary>
+    private static IResult? EventTypesError(List<string> values, out string[]? types)
+    {
+        (types, var message) = WebhookEvents.ParseTypes(values);
+        return message is null ? null : ApiErrors.Result(StatusCodes.Status400BadRequest, "invalid_event_types", message, "event_types");
+    }
+
+    private static IResult? TypeFilterError(string type) =>
+        WebhookEvents.Subscribable.Contains(type) || type == WebhookEvents.Test
+            ? null
+            : ApiErrors.Validation($"type must be one of: {string.Join(", ", WebhookEvents.Subscribable.Append(WebhookEvents.Test))}.");
 
     private static Guid? Subtenant(HttpContext http) =>
         http.GetRouteValue(SubtenantRouteValue) is string value && Guid.TryParse(value, out var id) ? id : null;

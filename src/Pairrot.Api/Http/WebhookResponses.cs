@@ -23,6 +23,7 @@ public sealed record WebhookCountsResponse(int Pending, int RetryWait, int Runni
 public sealed record WebhookHealthResponse(string Status, DateTimeOffset? LastTestAcceptedAt, DateTimeOffset? LastSuccessAt, int CurrentFailures);
 
 /// <param name="Url"><c>null</c> once the endpoint was erased with its tenant (Feature 014).</param>
+/// <param name="EventTypes">Feature 016: the subscribed event types; <c>webhook.test</c> is always delivered.</param>
 /// <param name="Version">The ETag for <c>PATCH</c> and <c>expected_version</c> for rotation.</param>
 public sealed record WebhookEndpointResponse(
     Guid Id,
@@ -31,6 +32,7 @@ public sealed record WebhookEndpointResponse(
     string Scope,
     string State,
     string Environment,
+    IReadOnlyList<string> EventTypes,
     int DestinationRevision,
     IReadOnlyList<WebhookKeyResponse> SigningKeys,
     WebhookCountsResponse Deliveries,
@@ -57,6 +59,7 @@ public sealed record WebhookEndpointResponse(
             InboundMessageResponse.Snake(e.Scope),
             InboundMessageResponse.Snake(e.State),
             InboundMessageResponse.Snake(e.Environment),
+            e.EventTypes,
             e.DestinationRevision,
             view.Keys.Select(WebhookKeyResponse.From).ToList(),
             new WebhookCountsResponse(c.Pending, c.RetryWait, c.Running, c.Failed, c.Held, c.Delivered, c.Abandoned),
@@ -80,11 +83,13 @@ public sealed record SignedEndpointResponse(WebhookEndpointResponse Endpoint, Si
 /// <param name="Body">The exact JSON sent to receivers; <c>null</c> once erased with its owner, never rebuilt.</param>
 /// <param name="BodySha256">The digest of the original body; kept after erasure.</param>
 /// <param name="PayloadErasedAt">Feature 014: when the body was erased; the event cannot be retried or replayed.</param>
+/// <param name="SubjectId">The payment request, transaction, review case, or inbound address; <c>sequence</c> increases per subject.</param>
 public sealed record WebhookEventResponse(
     Guid Id,
     string Type,
     Guid TenantId,
     Guid? PaymentRequestId,
+    Guid? SubjectId,
     int? Sequence,
     string Environment,
     bool Synthetic,
@@ -94,7 +99,7 @@ public sealed record WebhookEventResponse(
     DateTimeOffset? PayloadErasedAt)
 {
     public static WebhookEventResponse From(WebhookEvent e) => new(
-        e.Id, e.Type, e.TenantId, e.PaymentRequestId, e.Sequence, InboundMessageResponse.Snake(e.Environment), e.Synthetic, e.CreatedAt,
+        e.Id, e.Type, e.TenantId, e.PaymentRequestId, e.SubjectId, e.Sequence, InboundMessageResponse.Snake(e.Environment), e.Synthetic, e.CreatedAt,
         e.Body is null ? null : JsonDocument.Parse(e.Body).RootElement.Clone(), e.BodySha256, e.PayloadErasedAt);
 }
 

@@ -23,6 +23,8 @@ internal sealed class WebhookEndpointConfiguration : IEntityTypeConfiguration<We
             t.HasCheckConstraint("webhook_endpoints_counters_valid", "destination_revision >= 1 AND version >= 1");
             t.HasCheckConstraint("webhook_endpoints_erasure_consistent",
                 "(erased_at IS NULL AND url IS NOT NULL) OR (erased_at IS NOT NULL AND url IS NULL AND state = 'paused')");
+            t.HasCheckConstraint("webhook_endpoints_event_types_valid",
+                $"cardinality(event_types) >= 1 AND event_types <@ ARRAY[{string.Join(", ", WebhookEvents.Subscribable.Select(s => $"'{s}'"))}]::text[]");
         });
 
         builder.HasKey(e => e.Id);
@@ -31,6 +33,7 @@ internal sealed class WebhookEndpointConfiguration : IEntityTypeConfiguration<We
         builder.Property(e => e.State).HasConversion<SnakeCaseEnumConverter<WebhookEndpointState>>().HasMaxLength(20);
         builder.Property(e => e.Environment).HasConversion<LowercaseEnumConverter<InboundEnvironment>>().HasMaxLength(10);
         builder.Property(e => e.Url).HasMaxLength(WebhookDestinations.MaxUrlLength);
+        builder.Property(e => e.EventTypes).HasDefaultValueSql($"ARRAY['{WebhookEvents.PaymentRequestUpdated}']::text[]");
         builder.Property(e => e.Version).IsConcurrencyToken();
 
         builder.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
@@ -83,6 +86,7 @@ internal sealed class WebhookSigningKeyConfiguration : IEntityTypeConfiguration<
 internal sealed class WebhookEventConfiguration : IEntityTypeConfiguration<WebhookEvent>
 {
     public const string ChangeUniqueIndex = "webhook_events_change_unique";
+    public const string SubjectSequenceUniqueIndex = "webhook_events_subject_sequence_unique";
 
     public void Configure(EntityTypeBuilder<WebhookEvent> builder)
     {
@@ -90,8 +94,11 @@ internal sealed class WebhookEventConfiguration : IEntityTypeConfiguration<Webho
         {
             t.HasCheckConstraint("webhook_events_environment_valid", "environment IN ('test', 'live')");
             t.HasCheckConstraint("webhook_events_kind_consistent",
-                "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND sequence IS NULL AND environment = 'test') "
-                + "OR (NOT synthetic AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND sequence IS NOT NULL)");
+                "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND subject_id IS NULL AND sequence IS NULL AND environment = 'test') "
+                + $"OR (NOT synthetic AND type = '{WebhookEvents.PaymentRequestUpdated}' AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL "
+                + "AND subject_id = payment_request_id AND sequence IS NOT NULL) "
+                + $"OR (NOT synthetic AND type <> '{WebhookEvents.PaymentRequestUpdated}' AND payment_change_id IS NULL AND payment_request_id IS NULL "
+                + "AND subject_id IS NOT NULL AND sequence >= 1)");
             t.HasCheckConstraint("webhook_events_digest_format", "body_sha256 ~ '^[0-9a-f]{64}$'");
             t.HasCheckConstraint("webhook_events_payload_consistent", "(body IS NULL) = (payload_erased_at IS NOT NULL)");
         });
@@ -107,6 +114,11 @@ internal sealed class WebhookEventConfiguration : IEntityTypeConfiguration<Webho
         builder.HasIndex(e => e.PaymentChangeId).IsUnique().HasFilter("payment_change_id IS NOT NULL").HasDatabaseName(ChangeUniqueIndex);
         builder.HasIndex(e => new { e.TenantId, e.CreatedAt }).HasDatabaseName("webhook_events_tenant_time_idx");
         builder.HasIndex(e => new { e.PaymentRequestId, e.Sequence }).HasDatabaseName("webhook_events_request_idx");
+
+        // Feature 016: one event per subject and sequence; also finds a subject's last sequence.
+        builder.HasIndex(e => new { e.SubjectId, e.Sequence }).IsUnique().HasFilter("subject_id IS NOT NULL")
+            .HasDatabaseName(SubjectSequenceUniqueIndex);
+        builder.HasIndex(e => new { e.Type, e.Id }).HasDatabaseName("webhook_events_type_idx");
     }
 }
 

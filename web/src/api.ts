@@ -646,6 +646,19 @@ export type WebhookScope = 'own' | 'own_and_direct_children'
 export type WebhookHealth = 'paused' | 'configured' | 'test_accepted' | 'delivering' | 'failing'
 export type WebhookDeliveryState = 'pending' | 'running' | 'retry_wait' | 'delivered' | 'failed' | 'held' | 'abandoned'
 
+/** Feature 16: the event types an endpoint can subscribe to; `webhook.test` is always delivered. */
+export const WEBHOOK_EVENT_TYPES = [
+  'payment_request.updated',
+  'transaction.recorded',
+  'transaction.updated',
+  'review_case.opened',
+  'review_case.updated',
+  'inbound_address.paused',
+  'inbound_address.resumed',
+] as const
+
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number]
+
 export interface WebhookEndpoint {
   id: string
   tenant_id: string
@@ -654,6 +667,8 @@ export interface WebhookEndpoint {
   scope: WebhookScope
   state: 'active' | 'paused'
   environment: 'live' | 'test'
+  /** Applies to events recorded after a change; older ones are sent only by replay. */
+  event_types: WebhookEventType[]
   destination_revision: number
   signing_keys: { key_id: string; state: 'current' | 'retiring' | 'retired'; created_at: string; retires_at: string | null; retired_at: string | null }[]
   deliveries: { pending: number; retry_wait: number; running: number; failed: number; held: number; delivered: number; abandoned: number }
@@ -675,6 +690,8 @@ export interface WebhookEvent {
   type: string
   tenant_id: string
   payment_request_id: string | null
+  /** The payment request, transaction, review case, or inbound address; `sequence` increases per subject. */
+  subject_id: string | null
   sequence: number | null
   environment: 'live' | 'test'
   synthetic: boolean
@@ -731,4 +748,29 @@ export interface WebhookDeliveryDetail {
   event: WebhookEvent
   attempts: WebhookAttempt[]
   current_url: string | null
+}
+
+/** Feature 16: what waits for a person. `overdue_request` is opt-in. */
+export type AttentionKind =
+  | 'unmatched_transaction'
+  | 'review_case'
+  | 'paused_address'
+  | 'failed_delivery'
+  | 'overpaid_request'
+  | 'overdue_request'
+
+export interface AttentionItem {
+  kind: AttentionKind
+  tenant_id: string
+  bank_connection_id: string | null
+  subject_id: string
+  since: string
+  /** Amounts, symbols, results, and IDs; never sender data or free text. */
+  summary: Record<string, string | number | boolean | null>
+}
+
+export interface AttentionSummary {
+  total: number
+  by_kind: Partial<Record<AttentionKind, number>>
+  by_tenant: { tenant_id: string; total: number; by_kind: Partial<Record<AttentionKind, number>> }[]
 }

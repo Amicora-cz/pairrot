@@ -263,7 +263,7 @@ public class SubtenantErasureTests(PairrotFixture fx)
         // Event bodies are gone and are never rebuilt or sent again, also not to the parent.
         var events = (await management.GetAsync("/v1/management/webhook-events").ExpectAsync(HttpStatusCode.OK)).Items()
             .Where(e => e!.Str("tenant_id") == child.Id.ToString()).ToList();
-        Assert.Equal(2, events.Count);
+        Assert.Equal(2, events.Count(e => e!.Str("type") == "payment_request.updated"));
         Assert.All(events, e =>
         {
             Assert.Null(e!["body"]);

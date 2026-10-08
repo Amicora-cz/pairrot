@@ -195,6 +195,26 @@ public sealed class JsonBody
         return false;
     }
 
+    /// <summary>Reads an optional array of strings (<c>null</c> counts as absent); an element that is not a string is an error.</summary>
+    public bool TryGetStringList(string name, out Optional<List<string>> value, out IResult? error)
+    {
+        value = Optional<List<string>>.Unset;
+        error = null;
+        if (!_fields.TryGetValue(name, out var element) || element.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array && element.EnumerateArray().All(i => i.ValueKind == JsonValueKind.String))
+        {
+            value = new Optional<List<string>>(true, element.EnumerateArray().Select(i => i.GetString()!).ToList());
+            return true;
+        }
+
+        error = ApiErrors.Result(StatusCodes.Status400BadRequest, "invalid_request", $"Field '{name}' must be an array of strings.", name);
+        return false;
+    }
+
     /// <summary>Reads an optional string field that may also be explicitly <c>null</c>.</summary>
     public bool TryGetString(string name, out Optional<string?> value, out IResult? error)
     {

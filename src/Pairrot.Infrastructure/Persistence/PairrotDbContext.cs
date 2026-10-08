@@ -53,6 +53,15 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     /// <summary>ASP.NET Core Data Protection keys, so cookies survive application restarts.</summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
+    /// <summary>Feature 016: the transaction the event interceptor opened for a save that had none.</summary>
+    internal Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? EventTransaction { get; set; }
+
+    /// <summary>
+    /// Feature 016: event causes a service knows and the saved changes do not show, by subject ID,
+    /// e.g. who resumed an address. Consumed by the next save that records the subject's event.
+    /// </summary>
+    internal Dictionary<Guid, string> EventCauses { get; } = [];
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

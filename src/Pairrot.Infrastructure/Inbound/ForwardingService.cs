@@ -6,6 +6,7 @@ using Pairrot.Core.Banking;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Parsing;
 using Pairrot.Core.Tenants;
+using Pairrot.Core.Webhooks;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Tenants;
 
@@ -182,7 +183,7 @@ public partial class ForwardingService(
                 "The address was paused again soon after it was resumed. Fix the forwarding rule and replace the address, or ask support to resume it.");
         }
 
-        if (await ResumeCoreAsync(address, actor, ct) is { } error)
+        if (await ResumeCoreAsync(address, actor, WebhookEvents.Causes.ResumedByTenant, ct) is { } error)
         {
             return error;
         }
@@ -205,7 +206,7 @@ public partial class ForwardingService(
             return ServiceError.Conflict("address_not_paused", "The address is not paused.");
         }
 
-        return await ResumeCoreAsync(found, Actor.Administrator(operatorName), ct) is { } error
+        return await ResumeCoreAsync(found, Actor.Administrator(operatorName), WebhookEvents.Causes.ResumedByOperator, ct) is { } error
             ? error
             : await db.InboundAddresses.AsNoTracking().SingleAsync(a => a.Id == found.Id, ct);
     }
@@ -242,27 +243,29 @@ public partial class ForwardingService(
             .ToList();
     }
 
-    private async Task<ServiceError?> ResumeCoreAsync(InboundAddress address, Actor actor, CancellationToken ct)
+    /// <summary>Resumes under the row lock, so the change and its <c>inbound_address.resumed</c> event (Feature 016) are saved together.</summary>
+    private async Task<ServiceError?> ResumeCoreAsync(InboundAddress address, Actor actor, string cause, CancellationToken ct)
     {
         var now = Now();
-        var resumed = await db.InboundAddresses
-            .Where(a => a.Id == address.Id && a.Processing == InboundAddressProcessing.PausedForeignMail)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(a => a.Processing, InboundAddressProcessing.Active)
-                .SetProperty(a => a.OperatorResumeRequired, false)
-                .SetProperty(a => a.LastResumedAt, now)
-                .SetProperty(a => a.ResumeCount, a => a.ResumeCount + 1), ct);
-        if (resumed == 0)
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var tracked = (await db.InboundAddresses.FromSql($"SELECT * FROM inbound_addresses WHERE id = {address.Id} FOR UPDATE").ToListAsync(ct)).Single();
+        if (tracked.Processing != InboundAddressProcessing.PausedForeignMail)
         {
             return ServiceError.Conflict("address_not_paused", "The address is not paused.");
         }
 
+        tracked.Processing = InboundAddressProcessing.Active;
+        tracked.OperatorResumeRequired = false;
+        tracked.LastResumedAt = now;
+        tracked.ResumeCount++;
+        db.EventCauses[tracked.Id] = cause;
         tenants.AddAudit(actor, address.TenantId, AuditActions.InboundAddressResumed, new
         {
             ConnectionId = address.BankConnectionId,
             InboundAddress = address.Address,
         });
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return null;
     }
 

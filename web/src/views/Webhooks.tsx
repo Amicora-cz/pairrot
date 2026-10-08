@@ -10,8 +10,10 @@ import {
   type WebhookDeliveryState,
   type WebhookEndpoint,
   type WebhookEvent,
+  type WebhookEventType,
   type WebhookHealth,
   type WebhookScope,
+  WEBHOOK_EVENT_TYPES,
 } from '../api'
 import { ErrorText, Section } from '../components'
 import { formatDate, useAction, useIdempotencyKey, words } from '../util'
@@ -38,6 +40,36 @@ const HOLDS: Record<string, string> = {
 }
 
 const STATES: WebhookDeliveryState[] = ['pending', 'running', 'retry_wait', 'delivered', 'failed', 'held', 'abandoned']
+
+const EVENT_TYPE_HELP: Record<WebhookEventType, string> = {
+  'payment_request.updated': 'a payment request’s paid amount or status changed',
+  'transaction.recorded': 'a bank receipt was recorded and matched (or not)',
+  'transaction.updated': 'a receipt was allocated, revoked, ignored, restored, or needs review',
+  'review_case.opened': 'a receipt needs a person’s decision',
+  'review_case.updated': 'a review case got evidence, was resolved, or reopened',
+  'inbound_address.paused': 'the notification address stopped processing because of foreign mail',
+  'inbound_address.resumed': 'the notification address processes mail again',
+}
+
+/** Feature 16: which event types the endpoint receives. Payment changes only by default. */
+function EventTypePicker({ value, onChange, disabled }: { value: WebhookEventType[]; onChange: (next: WebhookEventType[]) => void; disabled?: boolean }) {
+  return (
+    <fieldset className="event-types">
+      <legend>Events</legend>
+      {WEBHOOK_EVENT_TYPES.map((type) => (
+        <label key={type} className="inline">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={value.includes(type)}
+            onChange={(e) => onChange(e.target.checked ? [...value, type] : value.filter((t) => t !== type))}
+          />{' '}
+          <code>{type}</code> <span className="muted">{EVENT_TYPE_HELP[type]}</span>
+        </label>
+      ))}
+    </fieldset>
+  )
+}
 
 /** What happened to a delivery, in words (Feature 011). */
 function describeDelivery(d: WebhookDelivery) {
@@ -105,9 +137,9 @@ export function Webhooks({
     <>
       <Section title="Payment webhook">
         <p className="muted">
-          Pairrot sends a signed <code>payment_request.updated</code> event to this URL whenever a payment request’s paid amount
-          or status changes. Failed requests are retried after 5 s, 60 s, and 1 h. See <code>docs/webhooks-receiver.md</code>{' '}
-          for the receiver contract.
+          Pairrot sends signed events to this URL: by default <code>payment_request.updated</code> whenever a payment request’s
+          paid amount or status changes, and optionally receipts, review cases, and address pauses. Failed requests are retried
+          after 5 s, 60 s, and 1 h. See <code>docs/webhooks-receiver.md</code> for the receiver contract.
         </p>
         {secret && <WebhookSecret secret={secret} onDismiss={() => setSecret(null)} />}
         <ErrorText error={error} />
@@ -175,7 +207,12 @@ function CreateEndpoint({
   canManageChildren: boolean
   onCreated: (signed: SignedWebhookEndpoint) => void
 }) {
-  const [form, setForm] = useState<{ url: string; environment: 'live' | 'test'; scope: WebhookScope }>({ url: '', environment: 'live', scope: 'own' })
+  const [form, setForm] = useState<{ url: string; environment: 'live' | 'test'; scope: WebhookScope; eventTypes: WebhookEventType[] }>({
+    url: '',
+    environment: 'live',
+    scope: 'own',
+    eventTypes: ['payment_request.updated'],
+  })
   const key = useIdempotencyKey()
   const { busy, error, run, setError } = useAction()
   const edit = (next: typeof form) => {
@@ -189,9 +226,12 @@ function CreateEndpoint({
       onSubmit={(e) => {
         e.preventDefault()
         void run(async () => {
-          const signed = await api<SignedWebhookEndpoint>('POST', base, { url: form.url.trim(), environment: form.environment, scope: form.scope }, {
-            idempotencyKey: key.current(),
-          })
+          const signed = await api<SignedWebhookEndpoint>(
+            'POST',
+            base,
+            { url: form.url.trim(), environment: form.environment, scope: form.scope, event_types: form.eventTypes },
+            { idempotencyKey: key.current() },
+          )
           key.reset()
           onCreated(signed)
         })
@@ -218,10 +258,11 @@ function CreateEndpoint({
             </select>
           </label>
         )}
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || form.eventTypes.length === 0}>
           Create endpoint
         </button>
       </div>
+      <EventTypePicker value={form.eventTypes} onChange={(eventTypes) => edit({ ...form, eventTypes })} />
       <p className="muted">The endpoint starts paused. Install the secret in the receiver, send a test, then activate it.</p>
       <ErrorText error={error} />
     </form>
@@ -244,6 +285,7 @@ function EndpointSettings({
   onSecret: (secret: { key_id: string; secret: string }) => void
 }) {
   const [url, setUrl] = useState(e.url ?? '')
+  const [eventTypes, setEventTypes] = useState<WebhookEventType[]>(e.event_types)
   const [grace, setGrace] = useState('86400')
   const [revokeRetiring, setRevokeRetiring] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -280,6 +322,12 @@ function EndpointSettings({
         <dd>{e.scope === 'own' ? 'this tenant only' : 'this tenant and its direct subtenants'}</dd>
         <dt>Environment</dt>
         <dd>{e.environment}</dd>
+        <dt>Events</dt>
+        <dd>
+          {e.event_types.map((t) => (
+            <code key={t}>{t} </code>
+          ))}
+        </dd>
         <dt>Last test accepted</dt>
         <dd>{formatDate(e.health.last_test_accepted_at)}</dd>
         <dt>Last real delivery</dt>
@@ -341,6 +389,22 @@ function EndpointSettings({
             <input value={url} onChange={(ev) => setUrl(ev.target.value)} required />
             <button type="submit" className="secondary" disabled={busy || url.trim() === e.url}>
               Change URL
+            </button>
+          </form>
+
+          <form
+            onSubmit={(ev) => {
+              ev.preventDefault()
+              void patch({ event_types: eventTypes }, 'Subscription changed. It applies to events recorded from now on; replay older ones if needed.')
+            }}
+          >
+            <EventTypePicker value={eventTypes} onChange={setEventTypes} disabled={busy} />
+            <button
+              type="submit"
+              className="secondary"
+              disabled={busy || eventTypes.length === 0 || [...eventTypes].sort().join() === [...e.event_types].sort().join()}
+            >
+              Save events
             </button>
           </form>
         </>
@@ -682,6 +746,7 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [reason, setReason] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
+  const [type, setType] = useState<WebhookEventType | ''>('')
   const key = useIdempotencyKey()
   const { busy, error, run } = useAction()
 
@@ -689,11 +754,12 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
     async (after: string | null) => {
       const query = new URLSearchParams({ limit: '50' })
       if (after) query.set('cursor', after)
+      if (type) query.set('type', type)
       const page = await api<ListResponse<WebhookEvent>>('GET', `${prefix}/webhook-events?${query}`)
       setItems((current) => (after ? [...current, ...page.items] : page.items))
       setCursor(page.next_cursor)
     },
-    [prefix],
+    [prefix, type],
   )
 
   useEffect(() => {
@@ -711,11 +777,28 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
   }
 
   return (
-    <Section title="Payment events">
+    <Section title="Events">
       <p className="muted">
-        Every change of a payment request’s paid amount or status. Creating or widening an endpoint does not send old history;
-        select events to replay them explicitly (up to 100 at once).
+        Every recorded event, whether or not the endpoint subscribes to its type. Creating or widening an endpoint does not send
+        old history; select events to replay them explicitly (up to 100 at once, subscribed types only).
       </p>
+      <label className="inline">
+        Type{' '}
+        <select
+          value={type}
+          onChange={(e) => {
+            setSelected(new Set())
+            setType(e.target.value as WebhookEventType | '')
+          }}
+        >
+          <option value="">all</option>
+          {WEBHOOK_EVENT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </label>
       <ErrorText error={error} />
       <table>
         <thead>
@@ -723,7 +806,7 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
             <th />
             <th>Created</th>
             <th>Type</th>
-            <th>Payment request</th>
+            <th>Subject</th>
             <th>Sequence</th>
             <th>Owner</th>
           </tr>
@@ -732,7 +815,7 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
           {items.map((ev) => (
             <tr key={ev.id}>
               <td>
-                {!readOnly && !ev.synthetic && (
+                {!readOnly && !ev.synthetic && endpoint.event_types.includes(ev.type as WebhookEventType) && (
                   <input type="checkbox" checked={selected.has(ev.id)} onChange={() => toggle(ev.id)} aria-label="Select for replay" />
                 )}
               </td>
@@ -740,14 +823,14 @@ function Events({ prefix, endpoint, readOnly, onReplayed }: { prefix: string; en
               <td>
                 {ev.type} {ev.environment === 'test' && <span className="badge badge-pending">test</span>}
               </td>
-              <td>{ev.payment_request_id ? <code>{ev.payment_request_id}</code> : '—'}</td>
+              <td>{ev.subject_id ? <code>{ev.subject_id}</code> : '—'}</td>
               <td>{ev.sequence ?? '—'}</td>
               <td>{ev.tenant_id === endpoint.tenant_id ? 'this tenant' : <code>{ev.tenant_id}</code>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {items.length === 0 && <p className="muted">No payment events.</p>}
+      {items.length === 0 && <p className="muted">No events.</p>}
       {cursor && (
         <button className="secondary" disabled={busy} onClick={() => void run(() => loadPage(cursor))}>
           Load more

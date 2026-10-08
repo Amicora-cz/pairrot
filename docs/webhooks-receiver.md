@@ -1,6 +1,6 @@
 # Receiving Pairrot payment webhooks
 
-This is the contract for an application that receives Pairrot's payment-status webhooks ([Feature 010](./features/010-payment-status-webhooks.md), retries in [Feature 011](./features/011-webhook-delivery-retries.md)), such as NaLekci. Pairrot stays the source of payment state; a webhook tells you that a payment request changed and what it looks like now.
+This is the contract for an application that receives Pairrot's payment-status webhooks ([Feature 010](./features/010-payment-status-webhooks.md), retries in [Feature 011](./features/011-webhook-delivery-retries.md)), such as NaLekci. Pairrot stays the source of payment state; a webhook tells you that a payment request changed and what it looks like now. An endpoint can also subscribe to receipts, review cases, and address pauses ([Feature 016](./features/016-attention-events-and-parent-attention-list.md), see [Other event types](#other-event-types)).
 
 ## Request
 
@@ -42,6 +42,42 @@ Pairrot sends `POST` to your HTTPS URL with a UTF-8 JSON body of at most 64 KiB 
 - `tenant_id` is the payment owner. `external_id` is unique only within that tenant.
 - `type: "webhook.test"` is a synthetic probe with `data.synthetic: true`. Acknowledge it and change nothing.
 
+## Other event types
+
+An endpoint receives only the types in its `event_types` (default: `payment_request.updated`). Every type uses the same envelope, and its `data` starts with `subject_id`, `sequence` (increasing per subject, so the rule "apply only a higher sequence" works unchanged), and `cause`. Payloads never contain the payer's name or account, e-mail content, or reasons typed by a person. `external_id` is your own reference. Events of test and fixture evidence have `environment: "test"` and go only to test endpoints.
+
+| Type | Subject | Causes |
+| --- | --- | --- |
+| `transaction.recorded` | transaction | `recorded`: the receipt's first matching attempt completed, or it needs review. It is sent for matched receipts too. |
+| `transaction.updated` | transaction | `allocated`, `revoked`, `ignored`, `restored`, `auto_matching_enabled`, `review_required`, `review_decided`, `marked_duplicate`, `rejected`, `rematched` |
+| `review_case.opened` | review case | `opened` |
+| `review_case.updated` | review case | `member_added`, `evidence_changed`, `resolved`, `reopened` |
+| `inbound_address.paused` | inbound address | `foreign_mail_limit` |
+| `inbound_address.resumed` | inbound address | `resumed_by_tenant`, `resumed_by_operator` |
+
+`transaction.recorded` of a partial payment (a suggestion, not an allocation):
+
+```json
+{
+  "id": "0199b7c2-…", "type": "transaction.recorded", "schema_version": 1, "created_at": "2026-10-08T09:12:00.123456Z",
+  "environment": "live", "tenant_id": "<owner>",
+  "data": {
+    "subject_id": "<transaction id>", "sequence": 1, "cause": "recorded",
+    "transaction_id": "<transaction id>", "bank_connection_id": "<connection id>", "bank_account_id": "<account id>",
+    "amount": 30000, "currency": "CZK", "variable_symbol": "17", "booked_on": "2026-10-08", "occurred_at": "2026-10-08T09:10:00+00:00",
+    "origin_path": "direct", "handling_state": "unallocated",
+    "matching": { "result": "amount_mismatch", "payment_request_id": "<request id>", "external_id": "booking_123_1" }
+  }
+}
+```
+
+- `handling_state` is `unallocated`, `allocated`, `ignored`, `rejected`, or `duplicate`. `matching.result` is the latest automatic result, e.g. `matched`, `amount_mismatch`, `request_not_found`, `missing_variable_symbol`, `request_already_paid`, `review_required`, or `not_live_evidence`; `payment_request_id` is the allocated request, otherwise the suggested one.
+- `transaction.updated` has the same fields plus `allocation_id` (the active allocation, or `null`).
+- `review_case.opened`: `review_case_id`, `bank_connection_id`, `issue` (`unverified_candidate`, `possible_duplicate`, `disputed`, `account_movement_conflict`), `state`, `reason_code`, `transaction_ids`. `review_case.updated` adds `resolution` (e.g. `mark_duplicate`, `null` while open) and `decision_id`.
+- `inbound_address.paused` and `.resumed`: `inbound_address_id`, `bank_connection_id`, `address_processing_state` (`paused_foreign_mail` or `active`), `foreign_count_24h`, `operator_only_resume` (the tenant cannot resume it; support can).
+
+The bodies are built by `WebhookEvents.ForSubject` in `src/Pairrot.Core/Webhooks/WebhookRules.cs`; `tests/Pairrot.UnitTests/WebhookRulesTests.cs` pins the envelope byte for byte, and `tests/Pairrot.IntegrationTests/AttentionEventTests.cs` shows every type produced by real changes.
+
 ## Verifying the signature
 
 1. Read the raw body bytes before parsing JSON.
@@ -78,7 +114,7 @@ A failed signature or schema check must not change anything; answer `401` or `40
 - Other `4xx` codes and redirects are final. After a final failure, an administrator can retry or replay the delivery in Pairrot.
 - Every attempt carries the same delivery ID and body, with a new timestamp and signature. Exactly-once delivery is not promised: a request you accepted just before a timeout can arrive again. Steps 3 and 4 make that harmless.
 - Order is not guaranteed. A correction can arrive before an older event, and the sequence check keeps the newer state.
-- Gaps in `sequence` are normal, e.g. when you subscribed later. For current state, the newest snapshot is enough. For the full history, read `GET .../payment-requests/{id}/changes`. To reconcile, read the request and apply it with the same sequence check.
+- Gaps in `sequence` are normal, e.g. when you subscribed later or to fewer types: events are recorded whether or not anyone subscribes, and a subscription change applies only to later events. For current state, the newest snapshot is enough. For the full history, read `GET .../payment-requests/{id}/changes`. To reconcile, read the request and apply it with the same sequence check.
 
 ## .NET example
 
@@ -101,7 +137,7 @@ app.MapPost("/pairrot/webhook", async (HttpRequest request, ReservationDb db) =>
     var root = json.RootElement;
     if (root.GetProperty("type").GetString() != "payment_request.updated")
     {
-        return Results.Ok(); // webhook.test and future types: acknowledge, no effect
+        return Results.Ok(); // webhook.test and other types: acknowledge, no effect
     }
 
     var eventId = root.GetProperty("id").GetGuid();

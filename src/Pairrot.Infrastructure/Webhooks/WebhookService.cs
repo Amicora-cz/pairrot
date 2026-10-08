@@ -29,9 +29,13 @@ public sealed record SecretReveal(EndpointView Endpoint, string KeyId, string Se
 /// <param name="CurrentUrl"><c>null</c> once the endpoint was erased (Feature 014).</param>
 public sealed record DeliveryView(WebhookDelivery Delivery, WebhookEvent Event, IReadOnlyList<WebhookDeliveryAttempt> Attempts, string? CurrentUrl);
 
-public sealed record EventFilter(Guid? OwnerTenantId = null, Guid? PaymentRequestId = null, DateTimeOffset? From = null, DateTimeOffset? To = null);
+public sealed record EventFilter(
+    Guid? OwnerTenantId = null, Guid? PaymentRequestId = null, DateTimeOffset? From = null, DateTimeOffset? To = null, string? Type = null);
 
-public sealed record EndpointChange(Optional<string?> Url = default, Optional<WebhookScope> Scope = default, Optional<WebhookEndpointState> State = default);
+/// <param name="EventTypes">Feature 016: validated and sorted (<see cref="WebhookEvents.ParseTypes"/>).</param>
+public sealed record EndpointChange(
+    Optional<string?> Url = default, Optional<WebhookScope> Scope = default, Optional<WebhookEndpointState> State = default,
+    Optional<string[]> EventTypes = default);
 
 /// <summary>
 /// Feature 010's management API: one endpoint per tenant, signing keys, test probes, event and
@@ -48,8 +52,9 @@ public class WebhookService(
 
     public DateTimeOffset Now() => jobs.Now();
 
+    /// <param name="eventTypes">Validated and sorted (<see cref="WebhookEvents.ParseTypes"/>); <c>null</c> subscribes to payment changes only.</param>
     public async Task<ServiceResult<CommandOutcome>> CreateAsync(
-        WebhookCaller caller, string? url, WebhookScope scope, InboundEnvironment environment, CommandRequest command,
+        WebhookCaller caller, string? url, WebhookScope scope, InboundEnvironment environment, string[]? eventTypes, CommandRequest command,
         Func<EndpointView, object> render, Func<SecretReveal, object> renderSecret, CancellationToken ct = default)
     {
         if (WebhookDestinations.Validate(url, options.Value.AllowedLocal) is { } urlError)
@@ -88,6 +93,7 @@ public class WebhookService(
                 Scope = scope,
                 Environment = environment,
                 Url = url!.Trim(),
+                EventTypes = eventTypes ?? [WebhookEvents.PaymentRequestUpdated],
                 CreatedAt = now,
                 UpdatedAt = now,
             };
@@ -100,6 +106,7 @@ public class WebhookService(
                 endpoint.Url,
                 Scope = Snake(scope),
                 Environment = Snake(environment),
+                endpoint.EventTypes,
                 KeyId = keyId,
             });
 
@@ -183,6 +190,13 @@ public class WebhookService(
         {
             changes["state"] = new { From = Snake(endpoint.State), To = Snake(change.State.Value) };
             endpoint.State = change.State.Value;
+        }
+
+        // Feature 016: applies to events recorded after this commits; queued work is unchanged.
+        if (change.EventTypes.HasValue && !change.EventTypes.Value!.SequenceEqual(endpoint.EventTypes))
+        {
+            changes["event_types"] = new { From = endpoint.EventTypes, To = change.EventTypes.Value };
+            endpoint.EventTypes = change.EventTypes.Value!;
         }
 
         if (changes.Count > 0)
@@ -353,6 +367,11 @@ public class WebhookService(
             query = query.Where(e => e.PaymentRequestId == requestId);
         }
 
+        if (filter.Type is { } type)
+        {
+            query = query.Where(e => e.Type == type);
+        }
+
         if (filter.From is { } from)
         {
             query = query.Where(e => e.CreatedAt >= from);
@@ -379,7 +398,7 @@ public class WebhookService(
     }
 
     public async Task<ServiceResult<Page<WebhookDelivery>>> ListDeliveriesAsync(
-        WebhookCaller caller, WebhookDeliveryState? state, int limit, Guid? before, CancellationToken ct = default)
+        WebhookCaller caller, WebhookDeliveryState? state, int limit, Guid? before, CancellationToken ct = default, string? type = null)
     {
         if (await FindEndpointAsync(caller, ct) is not ({ } owner, { } endpoint))
         {
@@ -390,6 +409,11 @@ public class WebhookService(
         if (state is { } value)
         {
             query = query.Where(d => d.State == value);
+        }
+
+        if (type is not null)
+        {
+            query = query.Where(d => db.WebhookEvents.Any(e => e.Id == d.EventId && e.Type == type));
         }
 
         if (before is { } cursor)
@@ -546,6 +570,13 @@ public class WebhookService(
                 return ServiceError.Conflict(WebhookHolds.EnvironmentMismatch, "Test payment changes go only to test endpoints, live ones only to live endpoints.");
             }
 
+            // Feature 016: replay respects the endpoint's current subscription.
+            if (events.FirstOrDefault(e => !endpoint.EventTypes.Contains(e.Type)) is { } unsubscribed)
+            {
+                return ServiceError.Conflict("event_type_not_subscribed",
+                    $"The endpoint does not subscribe to {unsubscribed.Type}; add it to event_types or leave the event out. Nothing was queued.");
+            }
+
             var existing = await db.WebhookDeliveries.Where(d => d.EndpointId == endpoint.Id && eventIds.Contains(d.EventId)).ToListAsync(ct);
             if (existing.Any(d => d.State == WebhookDeliveryState.Running))
             {
@@ -596,7 +627,7 @@ public class WebhookService(
 
         var children = endpoint.Scope == WebhookScope.OwnAndDirectChildren;
         var ids = await db.WebhookEvents.AsNoTracking()
-            .Where(e => !e.Synthetic && e.Environment == endpoint.Environment && e.CreatedAt >= from && e.CreatedAt < to
+            .Where(e => !e.Synthetic && e.Environment == endpoint.Environment && endpoint.EventTypes.Contains(e.Type) && e.CreatedAt >= from && e.CreatedAt < to
                 && (e.TenantId == subscriberTenantId || (children && db.Tenants.Any(t => t.Id == e.TenantId && t.ParentTenantId == subscriberTenantId)))
                 && !db.WebhookDeliveries.Any(d => d.EventId == e.Id && d.EndpointId == endpoint.Id))
             .OrderBy(e => e.CreatedAt)

@@ -131,7 +131,7 @@ public class WebhookTests(PairrotFixture fx)
 
         // The parent's ordinary tenant key does not read child payloads.
         Assert.Empty((await W.Client(root.TenantKey).GetAsync("/v1/tenant/webhook-events").ExpectAsync(HttpStatusCode.OK)).Items());
-        Assert.Single((await parent.Client.GetAsync("/v1/management/webhook-events").ExpectAsync(HttpStatusCode.OK)).Items());
+        Assert.Single((await parent.Client.GetAsync("/v1/management/webhook-events?type=payment_request.updated").ExpectAsync(HttpStatusCode.OK)).Items());
 
         // A sibling's later payment goes to the parent and to nobody else.
         var (siblingId, _, _) = await PaidChildAsync(root.ManagementKey, "777");
@@ -158,7 +158,7 @@ public class WebhookTests(PairrotFixture fx)
         // Old history is not sent without a replay; a new change is.
         await W.RunDeliveriesAsync();
         Assert.Empty(W.Receiver.To(subscriber.Url));
-        var events = (await subscriber.Client.GetAsync("/v1/tenant/webhook-events").ExpectAsync(HttpStatusCode.OK)).Items();
+        var events = (await subscriber.Client.GetAsync("/v1/tenant/webhook-events?type=payment_request.updated").ExpectAsync(HttpStatusCode.OK)).Items();
         var endpoint = await subscriber.Client.GetAsync("/v1/tenant/webhook-endpoint").ExpectAsync(HttpStatusCode.OK);
         W.Receiver.Script(subscriber.Url, _ => FakeWebhookReceiver.Status(503), _ => FakeWebhookReceiver.Timeout(),
             _ => FakeWebhookReceiver.Status(429), _ => FakeWebhookReceiver.Status(500));

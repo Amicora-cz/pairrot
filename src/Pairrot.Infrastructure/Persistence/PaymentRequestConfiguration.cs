@@ -111,6 +111,9 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
         builder.HasIndex(p => new { p.TenantId, p.Id }).HasDatabaseName("payment_requests_tenant_idx");
         builder.HasIndex(p => new { p.TenantId, p.Status, p.Id }).HasDatabaseName("payment_requests_tenant_status_idx");
         builder.HasIndex(p => new { p.TenantId, p.Status, p.DueAt }).HasDatabaseName("payment_requests_tenant_due_idx");
+
+        // Feature 016: overpaid requests in the attention list.
+        builder.HasIndex(p => p.TenantId).HasFilter("paid_amount > amount").HasDatabaseName("payment_requests_overpaid_idx");
     }
 }
 
