@@ -22,10 +22,10 @@ public static class BankConnectionEndpoints
     /// <summary>Fields that appear in responses but can never be changed through PATCH.</summary>
     private static readonly HashSet<string> ImmutableFields =
     [
-        "id", "tenant_id", "account_number", "iban", "currency", "status", "email_provider",
+        "id", "tenant_id", "bank_account_id", "account_number", "iban", "currency", "status", "email_provider",
         "provider_instance_id", "address_status", "inbound_address", "address_created_at", "provisioning_error", "reception",
         "address_replaced", "created_at", "updated_at",
-        "archived_at",
+        "archived_at", "archived_reason",
     ];
 
     private static readonly HashSet<string> UpdateFields = ["label", .. ImmutableFields];
@@ -48,6 +48,7 @@ public static class BankConnectionEndpoints
         group.MapGet("/{id:guid}", GetAsync);
         group.MapPatch("/{id:guid}", UpdateAsync);
         group.MapDelete("/{id:guid}", ArchiveAsync);
+        group.MapPost("/{id:guid}/restore", RestoreAsync);
         group.MapPost("/{id:guid}/inbound-address", AssignAddressAsync);
         group.MapPost("/{id:guid}/payment-qr", PaymentQrAsync);
         group.MapPost("/{id:guid}/payment-qr.png", PaymentQrPngAsync);
@@ -110,7 +111,7 @@ public static class BankConnectionEndpoints
         if (ImmutableFields.FirstOrDefault(body.Has) is { } immutable)
         {
             return ApiErrors.Result(StatusCodes.Status400BadRequest, "immutable_field",
-                $"{immutable} cannot be changed. To use another account, create a new bank connection and archive this one.",
+                $"{immutable} cannot be changed. To use another account, create a new bank connection and archive this one; use restore to reactivate an archived one.",
                 immutable);
         }
 
@@ -134,6 +135,11 @@ public static class BankConnectionEndpoints
         var result = await banks.ArchiveAsync(user.GetTenantId(), Subtenant(http), id, user.GetActor(), ct);
         return result.Error is { } failure ? ApiErrors.From(failure) : Results.NoContent();
     }
+
+    /// <summary>Feature 013: returns an archived connection to active, unless its account is registered again elsewhere.</summary>
+    private static async Task<IResult> RestoreAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, BankConnectionService banks, CancellationToken ct) =>
+        ToResponse(await banks.RestoreAsync(user.GetTenantId(), Subtenant(http), id, user.GetActor(), ct), banks);
 
     private static async Task<IResult> AssignAddressAsync(
         Guid id, HttpContext http, ClaimsPrincipal user, BankConnectionService banks, CancellationToken ct) =>

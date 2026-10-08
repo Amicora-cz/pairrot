@@ -6,10 +6,12 @@ namespace Pairrot.Api.Http;
 public sealed record ErrorBody(ErrorDetail Error);
 
 /// <param name="Field">The request field a validation error belongs to; omitted when the error is not about one field.</param>
+/// <param name="BankConnectionId">The caller's existing connection, for <c>bank_connection_exists</c>.</param>
 public sealed record ErrorDetail(
     string Code,
     string Message,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Field = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Field = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? BankConnectionId = null);
 
 /// <summary>All errors use <c>{"error": {"code": "...", "message": "...", "field": "..."}}</c>.</summary>
 public static class ApiErrors
@@ -28,7 +30,8 @@ public static class ApiErrors
         ServiceErrorKind.Validation => Result(StatusCodes.Status400BadRequest, error.Code, error.Message, error.Field),
         // Unknown and foreign resources look identical.
         ServiceErrorKind.NotFound => NotFound(),
-        ServiceErrorKind.Conflict => Result(StatusCodes.Status409Conflict, error.Code, error.Message),
+        ServiceErrorKind.Conflict => Results.Json(
+            new ErrorBody(new ErrorDetail(error.Code, error.Message, null, error.BankConnectionId)), statusCode: StatusCodes.Status409Conflict),
         ServiceErrorKind.Unauthorized => Result(StatusCodes.Status401Unauthorized, error.Code, error.Message),
         ServiceErrorKind.Forbidden => Result(StatusCodes.Status403Forbidden, error.Code, error.Message),
         ServiceErrorKind.PreconditionFailed => Result(StatusCodes.Status412PreconditionFailed, error.Code, error.Message),

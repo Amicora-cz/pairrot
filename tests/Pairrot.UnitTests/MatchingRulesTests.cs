@@ -57,7 +57,10 @@ public class MatchingRulesTests
         Assert.Equal(MatchResults.RequestAlreadyPaid,
             MatchingRules.Decide(Transaction(25000), [Request(status: PaymentRequestStatus.PartiallyPaid, paid: 20000)]));
         Assert.Equal(MatchResults.MultipleCandidates, MatchingRules.Decide(Transaction(), [Request(), Request(vs: "123")]));
-        Assert.Equal(MatchResults.RequestNotFound, MatchingRules.Decide(Transaction(), [Request().Also(r => r.BankConnectionId = Guid.NewGuid())]));
+        // Feature 013: the scope is the tenant and the physical account, whichever registration of it.
+        Assert.Equal(MatchResults.Matched, MatchingRules.Decide(Transaction(), [Request().Also(r => r.BankConnectionId = Guid.NewGuid())]));
+        Assert.Equal(MatchResults.RequestNotFound, MatchingRules.Decide(Transaction(), [Request().Also(r => r.BankAccountId = Guid.NewGuid())]));
+        Assert.Equal(MatchResults.RequestNotFound, MatchingRules.Decide(Transaction(), [Request().Also(r => r.TenantId = Guid.NewGuid())]));
         Assert.Equal(MatchResults.CurrencyMismatch, MatchingRules.Decide(Transaction(), [Request().Also(r => r.Currency = "EUR")]));
     }
 
@@ -71,6 +74,12 @@ public class MatchingRulesTests
         Assert.Equal(MatchResults.NotLiveEvidence, MatchingRules.AutomaticBlock(Transaction().Also(t => t.SourceKind = InboundSourceKind.Fixture), false, false));
         Assert.Null(MatchingRules.AutomaticBlock(Transaction().Also(t => t.SourceKind = InboundSourceKind.Fixture), false, allowTestEvidence: true));
         Assert.Equal(MatchResults.AutoMatchingBlocked, MatchingRules.AutomaticBlock(Transaction().Also(t => t.AutoMatchBlocked = true), false, false));
+
+        // Feature 013: a cross-tenant movement conflict blocks everyone, also after a tenant's confirmation.
+        Assert.Equal(MatchResults.AccountMovementConflict, MatchingRules.ManualBlock(Transaction().Also(t => t.MovementConflict = true), false, false));
+        Assert.Equal(MatchResults.AccountMovementConflict, MatchingRules.ManualBlock(
+            Transaction().Also(t => (t.MovementConflict, t.ManuallyConfirmed, t.IngestionStatus) = (true, true, IngestionStatus.ReviewRequired)), false, false));
+        Assert.Equal(MatchResults.AccountMovementConflict, MatchingRules.AutomaticBlock(Transaction().Also(t => t.MovementConflict = true), false, false));
 
         // A confirmed receipt under review is allocatable by hand only.
         var confirmed = Transaction().Also(t => (t.IngestionStatus, t.ManuallyConfirmed) = (IngestionStatus.ReviewRequired, true));

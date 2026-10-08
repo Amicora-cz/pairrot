@@ -110,8 +110,8 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
     /// Creates a request, or returns the one already created with the same external ID and the
     /// same original input. Concurrent identical requests end with one record; the unique indexes
     /// decide, and the losers return the winner's record. Without a supplied symbol, the next free
-    /// one of the bank connection is assigned (Feature 012); every creation on a connection holds
-    /// its allocator lock until it commits.
+    /// one of the bank account is assigned (Feature 012); every creation on an account, through any
+    /// of its registrations, holds the account's allocator lock until it commits (Feature 013).
     /// </summary>
     public async Task<ServiceResult<CreatedPaymentRequest>> CreateAsync(
         Guid callerTenantId, Guid? subtenantId, PaymentRequestInput input, Actor actor, CancellationToken ct = default)
@@ -149,19 +149,21 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return lockedStateError;
         }
 
-        var connectionStatus = await LockStatusAsync(db.Database.SqlQuery<string>(
-            $"SELECT status AS \"Value\" FROM bank_connections WHERE id = {draft.BankConnectionId} AND tenant_id = {owner.Id} FOR SHARE"), ct);
-        if (connectionStatus is null)
+        var locked = (await db.Database.SqlQuery<ConnectionLock>(
+                $"SELECT status, bank_account_id FROM bank_connections WHERE id = {draft.BankConnectionId} AND tenant_id = {owner.Id} FOR SHARE")
+            .ToListAsync(ct)).SingleOrDefault();
+        if (locked is null)
         {
             return ServiceError.NotFound("The bank connection was not found.");
         }
 
-        if (connectionStatus != "active")
+        if (locked.Status != "active")
         {
             return ServiceError.Conflict("bank_connection_archived", "An archived bank connection cannot be used for new payment requests.");
         }
 
-        var cursor = await LockAllocatorAsync(draft.BankConnectionId, ct);
+        var accountId = locked.BankAccountId;
+        var cursor = await LockAllocatorAsync(accountId, ct);
 
         // A creation that committed while this one waited for the lock is replayed, not duplicated.
         if (await ReplayAsync(owner.Id, draft, ct) is { } lockedReplay)
@@ -173,9 +175,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         string variableSymbolKey;
         if (draft.VariableSymbolKey is { } suppliedKey)
         {
-            // A supplied symbol is reserved as it is and never moves the cursor.
-            if (await db.PaymentRequests.AnyAsync(
-                    p => p.BankConnectionId == draft.BankConnectionId && p.VariableSymbolKey == suppliedKey, ct))
+            // A supplied symbol is reserved as it is and never moves the cursor. Any registration of
+            // the account counts, in any tenant: the old instructions may still be paid.
+            if (await db.PaymentRequests.AnyAsync(p => p.BankAccountId == accountId && p.VariableSymbolKey == suppliedKey, ct))
             {
                 return VariableSymbolTaken();
             }
@@ -185,14 +187,14 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         }
         else
         {
-            if (await FindFreeVariableSymbolAsync(draft.BankConnectionId, cursor, ct) is not { } assigned)
+            if (await FindFreeVariableSymbolAsync(accountId, cursor, ct) is not { } assigned)
             {
                 return ServiceError.Conflict("variable_symbol_space_exhausted",
                     "No automatic variable symbol is left on this bank account; supply an unused variable_symbol instead.");
             }
 
             await db.Database.ExecuteSqlAsync(
-                $"UPDATE variable_symbol_allocators SET next_candidate = {assigned + 1} WHERE bank_connection_id = {draft.BankConnectionId}",
+                $"UPDATE variable_symbol_allocators SET next_candidate = {assigned + 1} WHERE bank_account_id = {accountId}",
                 ct);
             variableSymbol = assigned.ToString(CultureInfo.InvariantCulture);
             variableSymbolKey = variableSymbol;
@@ -206,6 +208,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             Id = Guid.CreateVersion7(),
             TenantId = owner.Id,
             BankConnectionId = connection.Id,
+            BankAccountId = connection.BankAccountId,
             ExternalId = draft.ExternalId,
             AccountNumber = connection.AccountNumber,
             Iban = connection.Iban,
@@ -233,6 +236,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             PaymentRequestId = request.Id,
             request.ExternalId,
             BankConnectionId = connection.Id,
+            connection.BankAccountId,
             request.Amount,
             request.VariableSymbol,
             VariableSymbolSource = SnakeCaseEnum<VariableSymbolSource>.ToName(request.VariableSymbolSource),
@@ -486,26 +490,26 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
     }
 
     /// <summary>
-    /// Locks the connection's allocator until the transaction ends, creating it at 1 on first
-    /// use, and returns its cursor. Concurrent first uses insert one row; the others wait for it.
+    /// Locks the account's allocator until the transaction ends, creating it at 1 on first use,
+    /// and returns its cursor. Concurrent first uses insert one row; the others wait for it.
     /// </summary>
-    private async Task<long> LockAllocatorAsync(Guid connectionId, CancellationToken ct)
+    private async Task<long> LockAllocatorAsync(Guid accountId, CancellationToken ct)
     {
         await db.Database.ExecuteSqlAsync(
-            $"INSERT INTO variable_symbol_allocators (bank_connection_id, next_candidate) VALUES ({connectionId}, 1) ON CONFLICT (bank_connection_id) DO NOTHING",
+            $"INSERT INTO variable_symbol_allocators (bank_account_id, next_candidate) VALUES ({accountId}, 1) ON CONFLICT (bank_account_id) DO NOTHING",
             ct);
         return await db.Database.SqlQuery<long>(
-                $"SELECT next_candidate AS \"Value\" FROM variable_symbol_allocators WHERE bank_connection_id = {connectionId} FOR UPDATE")
+                $"SELECT next_candidate AS \"Value\" FROM variable_symbol_allocators WHERE bank_account_id = {accountId} FOR UPDATE")
             .SingleAsync(ct);
     }
 
     /// <summary>
-    /// The lowest symbol at or above <paramref name="cursor"/> that no request on the connection
-    /// holds (leading zeros ignored), or <c>null</c> when none is left up to the maximum. Only the
-    /// cursor and the successors of symbols taken at or above it can be the first gap, so both
-    /// lookups use the (connection, number) index.
+    /// The lowest symbol at or above <paramref name="cursor"/> that no request on the account holds
+    /// (leading zeros ignored, any registration, any tenant), or <c>null</c> when none is left up to
+    /// the maximum. Only the cursor and the successors of symbols taken at or above it can be the
+    /// first gap, so both lookups use the (account, number) index.
     /// </summary>
-    private async Task<long?> FindFreeVariableSymbolAsync(Guid connectionId, long cursor, CancellationToken ct) =>
+    private async Task<long?> FindFreeVariableSymbolAsync(Guid accountId, long cursor, CancellationToken ct) =>
         await db.Database.SqlQuery<long?>($"""
             SELECT min(c.candidate) AS "Value"
             FROM (
@@ -513,16 +517,23 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
                 UNION ALL
                 SELECT p.variable_symbol_number + 1
                 FROM payment_requests p
-                WHERE p.bank_connection_id = {connectionId} AND p.variable_symbol_number >= {cursor}
+                WHERE p.bank_account_id = {accountId} AND p.variable_symbol_number >= {cursor}
             ) c
             WHERE c.candidate <= {PaymentRequestRules.MaxAutomaticVariableSymbol}
               AND NOT EXISTS (
                 SELECT 1 FROM payment_requests q
-                WHERE q.bank_connection_id = {connectionId} AND q.variable_symbol_number = c.candidate)
+                WHERE q.bank_account_id = {accountId} AND q.variable_symbol_number = c.candidate)
             """).SingleAsync(ct);
 
     private static async Task<string?> LockStatusAsync(IQueryable<string> query, CancellationToken ct) =>
         (await query.ToListAsync(ct)).SingleOrDefault();
+
+    /// <summary>A bank connection's state read under <c>FOR SHARE</c>.</summary>
+    private sealed class ConnectionLock
+    {
+        public string Status { get; set; } = "";
+        public Guid BankAccountId { get; set; }
+    }
 
     private Task<Tenant?> FindOwnerAsync(Guid callerTenantId, Guid? subtenantId, CancellationToken ct) =>
         subtenantId is { } childId

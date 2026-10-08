@@ -39,8 +39,8 @@ public sealed class MatchingOptionsValidator(IHostEnvironment environment) : IVa
 
 /// <summary>
 /// The one place where allocations change a request's payment result. Every operation works on
-/// tracked entities inside the caller's database transaction, which must hold the connection lock
-/// (<see cref="LockConnectionAsync"/>): allocation or revocation, transaction handling, the
+/// tracked entities inside the caller's database transaction, which must hold the account lock
+/// (<see cref="LockAccountAsync"/>): allocation or revocation, transaction handling, the
 /// recalculated request, the payment change, and the audit event are saved together or not at all.
 /// </summary>
 public class PaymentLedger(
@@ -53,11 +53,14 @@ public class PaymentLedger(
     public DateTimeOffset Now() => jobs.Now();
 
     /// <summary>
-    /// Serializes parsing, matching, review, and manual allocation of one bank connection for the
-    /// rest of the current transaction (the same lock as Feature 007's parse job).
+    /// Serializes parsing, matching, review, and manual allocation of one physical bank account,
+    /// over all its registrations, for the rest of the current transaction (Feature 013; the same
+    /// lock as Feature 007's parse job). Also used with other IDs, e.g. a webhook subscriber.
     /// </summary>
-    public Task LockConnectionAsync(Guid connectionId, CancellationToken ct) =>
-        db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({connectionId.ToString()}, 7007))", ct);
+    public Task LockAccountAsync(Guid accountId, CancellationToken ct) => LockAsync(db, accountId, ct);
+
+    internal static Task LockAsync(PairrotDbContext db, Guid id, CancellationToken ct) =>
+        db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({id.ToString()}, 7007))", ct);
 
     public static string Label(Actor actor) => ActorLabels.Of(actor.UserId, actor.ApiKeyId, actor.Description);
 
@@ -86,7 +89,8 @@ public class PaymentLedger(
 
     /// <summary>
     /// Allocates the whole transaction to the request. The caller has checked eligibility under the
-    /// connection lock; this checks only the arithmetic and records the consequences.
+    /// account lock; this checks only the arithmetic and records the consequences. The request may
+    /// belong to another registration of the transaction's account, of the same tenant.
     /// </summary>
     public async Task<ServiceResult<PaymentAllocation>> AllocateAsync(
         IncomingTransaction transaction, PaymentRequest request, AllocationMethod method, string? reason, Actor actor, CancellationToken ct)
@@ -103,6 +107,8 @@ public class PaymentLedger(
             Id = Guid.CreateVersion7(),
             TenantId = transaction.TenantId,
             BankConnectionId = transaction.BankConnectionId,
+            PaymentRequestBankConnectionId = request.BankConnectionId,
+            BankAccountId = transaction.BankAccountId,
             TransactionId = transaction.Id,
             PaymentRequestId = request.Id,
             Amount = transaction.Amount,
@@ -221,6 +227,7 @@ public class PaymentLedger(
             Id = Guid.CreateVersion7(),
             TenantId = request.TenantId,
             BankConnectionId = request.BankConnectionId,
+            BankAccountId = request.BankAccountId,
             PaymentRequestId = request.Id,
             Sequence = request.ChangeSequence,
             ExternalId = request.ExternalId,

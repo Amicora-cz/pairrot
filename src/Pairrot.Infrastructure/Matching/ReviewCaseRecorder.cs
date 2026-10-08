@@ -9,11 +9,23 @@ namespace Pairrot.Infrastructure.Matching;
 
 /// <summary>
 /// Opens, extends, and reopens review cases for the parser's unresolved results, inside the
-/// parse job's transaction under the connection lock. A transaction that enters an open case loses
+/// parse job's transaction under the account lock. A transaction that enters an open case loses
 /// its allocation in the same transaction. Unchanged evidence never recreates a decided case.
+/// A case belongs to the receiving connection; its members may come from any registration of the
+/// same account by the same tenant, never from another tenant (Feature 013).
 /// </summary>
 public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
 {
+    /// <summary>The generic, local-only explanation of a cross-tenant bank reference conflict; it names nothing foreign.</summary>
+    public const string ForeignReferenceMessage =
+        "A movement with this bank reference was already recorded for this bank account by an earlier registration of it. "
+        + "No transaction was created; an operator reviews the notification.";
+
+    /// <summary>The generic, local-only explanation of a cross-tenant lookalike.</summary>
+    public const string ForeignLookalikeMessage =
+        "An earlier registration of this bank account recorded a movement with the same amount, date, and symbol. "
+        + "This one cannot be allocated until an operator confirms it is a distinct payment.";
+
     /// <summary>
     /// A recorded transaction is contradicted (changed facts, a rejected source, a conflicting bank
     /// reference). <paramref name="evidence"/> describes the contradiction, e.g. the new facts.
@@ -43,7 +55,8 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
             return;
         }
 
-        var reviewCase = NewCase(transaction.TenantId, transaction.BankConnectionId, ReviewIssue.Disputed, null, code, message, key);
+        // The case belongs to the connection that received the contradicting message.
+        var reviewCase = NewCase(transaction.TenantId, run.BankConnectionId, run.BankAccountId, ReviewIssue.Disputed, null, code, message, key);
         AddMember(reviewCase, transaction.Id, null);
         AddMember(reviewCase, null, run.Id);
         await ledger.LoseEligibilityAsync(transaction, ct);
@@ -60,12 +73,12 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
         var ids = related.Select(t => t.Id).ToList();
         var existing = await db.ReviewCases
             .Where(c => c.Issue == ReviewIssue.PossibleDuplicate && c.State == ReviewCaseState.Open
-                && c.BankConnectionId == created.BankConnectionId
+                && c.TenantId == created.TenantId && c.BankAccountId == created.BankAccountId
                 && db.ReviewCaseMembers.Any(m => m.CaseId == c.Id && m.TransactionId != null && ids.Contains(m.TransactionId.Value)))
             .OrderBy(c => c.Id)
             .FirstOrDefaultAsync(ct);
 
-        var reviewCase = existing ?? NewCase(created.TenantId, created.BankConnectionId, ReviewIssue.PossibleDuplicate, null,
+        var reviewCase = existing ?? NewCase(created.TenantId, created.BankConnectionId, created.BankAccountId, ReviewIssue.PossibleDuplicate, null,
             ParseReasons.PossibleDuplicate,
             "Notifications with the same amount, date, and symbol may describe one payment or several.",
             Key(ParseReasons.PossibleDuplicate, created.ComparisonFingerprint));
@@ -100,7 +113,8 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
         var reviewCase = await db.ReviewCases.SingleOrDefaultAsync(c => c.InboundMessageId == messageId, ct);
         if (reviewCase is null)
         {
-            reviewCase = NewCase(tenantId, connectionId, ReviewIssue.UnverifiedCandidate, messageId, run.ReasonCode, run.ReasonMessage, key);
+            reviewCase = NewCase(tenantId, connectionId, run.BankAccountId, ReviewIssue.UnverifiedCandidate, messageId,
+                run.ReasonCode, run.ReasonMessage, key);
             AddMember(reviewCase, null, run.Id);
             return;
         }
@@ -128,6 +142,56 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
         Touch(reviewCase);
     }
 
+    /// <summary>
+    /// Feature 013: the movement may already be recorded by another tenant's registration of the
+    /// account. One case per message, holding local evidence only: the run and, for a lookalike,
+    /// the new local transaction. <paramref name="reasonCode"/> is <c>bank_reference_conflict</c>
+    /// (proven; nothing may approve it) or <c>possible_duplicate</c> (lookalike; an operator may
+    /// confirm it distinct). A decided case reopens only when the evidence changes.
+    /// </summary>
+    public async Task OnAccountMovementConflictAsync(
+        MessageParseRun run, IncomingTransaction? transaction, string reasonCode, string message, string evidence, CancellationToken ct)
+    {
+        var key = Key(reasonCode, evidence);
+        var reviewCase = await db.ReviewCases
+            .Where(c => c.Issue == ReviewIssue.AccountMovementConflict && c.TenantId == run.TenantId
+                && db.ReviewCaseMembers.Any(m => m.CaseId == c.Id && m.ParseRunId != null
+                    && db.MessageParseRuns.Any(r => r.Id == m.ParseRunId && r.InboundMessageId == run.InboundMessageId)))
+            .OrderBy(c => c.Id)
+            .FirstOrDefaultAsync(ct);
+        if (reviewCase is null)
+        {
+            reviewCase = NewCase(run.TenantId, run.BankConnectionId, run.BankAccountId, ReviewIssue.AccountMovementConflict, null,
+                reasonCode, message, key);
+        }
+        else if (reviewCase.State == ReviewCaseState.Resolved && reviewCase.EvidenceKey == key)
+        {
+            // The same conflict was already decided by an operator; the decision stands.
+            return;
+        }
+        else
+        {
+            if (reviewCase.State == ReviewCaseState.Resolved)
+            {
+                reviewCase.State = ReviewCaseState.Open;
+                reviewCase.ResolvedAt = null;
+                AddDecision(reviewCase, ReviewAction.Reopen, "A new parse run extracted different evidence from the message.");
+            }
+
+            reviewCase.EvidenceKey = key;
+            reviewCase.ReasonCode = reasonCode;
+            reviewCase.ReasonMessage = message;
+            Touch(reviewCase);
+        }
+
+        if (transaction is not null)
+        {
+            AddMember(reviewCase, transaction.Id, null);
+        }
+
+        AddMember(reviewCase, null, run.Id);
+    }
+
     /// <summary>The message now yields an accepted transaction itself; its open candidate case is closed by the system.</summary>
     public async Task SupersedeCandidateAsync(Guid messageId, CancellationToken ct)
     {
@@ -152,7 +216,7 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
             .ToListAsync(ct);
 
     internal PaymentReviewCase NewCase(
-        Guid tenantId, Guid connectionId, ReviewIssue issue, Guid? messageId, string code, string message, string key)
+        Guid tenantId, Guid connectionId, Guid accountId, ReviewIssue issue, Guid? messageId, string code, string message, string key)
     {
         var now = ledger.Now();
         var reviewCase = new PaymentReviewCase
@@ -160,6 +224,7 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
             Id = Guid.CreateVersion7(),
             TenantId = tenantId,
             BankConnectionId = connectionId,
+            BankAccountId = accountId,
             Issue = issue,
             InboundMessageId = messageId,
             ReasonCode = code,
@@ -185,6 +250,7 @@ public class ReviewCaseRecorder(PairrotDbContext db, PaymentLedger ledger)
             CaseId = reviewCase.Id,
             TenantId = reviewCase.TenantId,
             BankConnectionId = reviewCase.BankConnectionId,
+            BankAccountId = reviewCase.BankAccountId,
             TransactionId = transactionId,
             ParseRunId = runId,
             AddedAt = ledger.Now(),

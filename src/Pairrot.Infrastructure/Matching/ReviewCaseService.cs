@@ -18,8 +18,14 @@ public sealed record ReviewCaseDetail(
     IReadOnlyList<PaymentReviewDecision> Decisions);
 
 /// <param name="TransactionVersions">The version of every transaction in the case, as shown to the caller.</param>
+/// <param name="ReasonCode">Operator decisions only: a structured reason, e.g. <c>duplicate_of_foreign_movement</c>.</param>
 public sealed record ResolveInput(
-    ReviewAction Decision, string? Reason, int? Version, IReadOnlyDictionary<Guid, int>? TransactionVersions, Guid? CanonicalTransactionId);
+    ReviewAction Decision,
+    string? Reason,
+    int? Version,
+    IReadOnlyDictionary<Guid, int>? TransactionVersions,
+    Guid? CanonicalTransactionId,
+    string? ReasonCode = null);
 
 public sealed record ReopenInput(string? Reason, int? Version, IReadOnlyDictionary<Guid, int>? TransactionVersions);
 
@@ -28,7 +34,10 @@ public sealed record ReopenInput(string? Reason, int? Version, IReadOnlyDictiona
 /// <c>manual_confirmation</c>: it makes a receipt allocatable by hand, never automatically, and
 /// never rewrites authentication evidence, the origin path, sender policy, or forwarding sources.
 /// Approval cannot invent payment facts: incomplete, contradictory, or wrong-account evidence stays
-/// unresolved until the parser is fixed and the source reprocessed.
+/// unresolved until the parser is fixed and the source reprocessed. Feature 013: an
+/// <c>account_movement_conflict</c> case is decided by an operator only
+/// (<see cref="ResolveAsOperatorAsync"/>), and no tenant decision can approve a transaction that
+/// still carries a cross-tenant movement conflict.
 /// </summary>
 public class ReviewCaseService(
     PairrotDbContext db, TenantService tenants, PaymentLedger ledger, ManualCommands commands, PaymentMatchingService matching,
@@ -41,6 +50,9 @@ public class ReviewCaseService(
         ParseReasons.AuthenticationUnknown, ParseReasons.DmarcNotPass, ParseReasons.ForwarderNotAuthenticated,
         ParseReasons.InvalidVariableSymbol, ParseReasons.OccurredAtInvalid, ParseReasons.OccurredAtAmbiguous,
     ];
+
+    /// <summary>The structured reason an operator gives when a conflicting notification is a copy of another tenant's movement.</summary>
+    public const string DuplicateOfForeignMovement = "duplicate_of_foreign_movement";
 
     public async Task<ServiceResult<Page<PaymentReviewCase>>> ListAsync(
         Guid callerTenantId, Guid? subtenantId, ReviewCaseState? state, int limit, Guid? before, CancellationToken ct = default)
@@ -101,14 +113,65 @@ public class ReviewCaseService(
             return ServiceError.NotFound();
         }
 
+        if (found.Issue == ReviewIssue.AccountMovementConflict)
+        {
+            return ServiceError.Conflict("operator_decision_required",
+                "This notification may describe a movement recorded by an earlier registration of the bank account; only an operator can decide it.");
+        }
+
+        return await ResolveCoreAsync(owner.Id, found, input with { ReasonCode = null }, command, render, ct);
+    }
+
+    /// <summary>
+    /// Operator decisions (<c>reviews resolve</c> in the CLI, never over HTTP) on any case, with
+    /// the same versions, idempotency, and audit rules as the owner's. On an
+    /// <c>account_movement_conflict</c> case only <c>reject</c> with reason code
+    /// <c>duplicate_of_foreign_movement</c> (no canonical pointer is saved), or
+    /// <c>confirm_distinct</c> of exactly one local lookalike without a proven bank reference
+    /// conflict, applies; both recheck the account under its lock.
+    /// </summary>
+    public async Task<ServiceResult<CommandOutcome>> ResolveAsOperatorAsync(
+        Guid caseId, ResolveInput input, CommandRequest command, Func<ReviewCaseDetail, object> render, CancellationToken ct = default)
+    {
+        if (MatchingRules.ValidateReason(input.Reason) is { } reasonError)
+        {
+            return ServiceError.Validation("invalid_reason", "reason", reasonError);
+        }
+
+        if (input.ReasonCode is { } code && !System.Text.RegularExpressions.Regex.IsMatch(code, "^[a-z][a-z0-9_]{0,49}$"))
+        {
+            return ServiceError.Validation("invalid_reason_code", "reason_code", "reason_code must be lowercase letters, digits, and underscores.");
+        }
+
+        var found = await db.ReviewCases.AsNoTracking().SingleOrDefaultAsync(c => c.Id == caseId, ct);
+        return found is null ? ServiceError.NotFound() : await ResolveCoreAsync(found.TenantId, found, input, command, render, ct);
+    }
+
+    /// <summary>Operator view of any case with its local evidence, for <c>reviews show</c>.</summary>
+    public async Task<ServiceResult<ReviewCaseDetail>> GetAsOperatorAsync(Guid caseId, CancellationToken ct = default)
+    {
+        var found = await db.ReviewCases.AsNoTracking().SingleOrDefaultAsync(c => c.Id == caseId, ct);
+        return found is null ? ServiceError.NotFound() : await DetailAsync(found, ct);
+    }
+
+    private async Task<ServiceResult<CommandOutcome>> ResolveCoreAsync(
+        Guid ownerId, PaymentReviewCase found, ResolveInput input, CommandRequest command, Func<ReviewCaseDetail, object> render,
+        CancellationToken ct)
+    {
+        if (input.Decision is ReviewAction.Reopen or ReviewAction.Superseded)
+        {
+            return ServiceError.Validation("invalid_decision", "decision",
+                "decision must be confirm_payment, confirm_distinct, mark_duplicate, keep_existing, or reject.");
+        }
+
         if (input.Version is not { } version || input.TransactionVersions is null)
         {
             return ServiceError.PreconditionRequired("Send expected_version and expected_transaction_versions as shown to you.");
         }
 
-        return await commands.RunAsync(owner.Id, found.BankConnectionId, command, async () =>
+        return await commands.RunAsync(ownerId, found.BankAccountId, command, async () =>
         {
-            var (reviewCase, transactions, error) = await LoadForDecisionAsync(owner.Id, found.Id, version, input.TransactionVersions, ct);
+            var (reviewCase, transactions, error) = await LoadForDecisionAsync(ownerId, found.Id, version, input.TransactionVersions, ct);
             if (error is not null)
             {
                 return error;
@@ -121,7 +184,10 @@ public class ReviewCaseService(
 
             var reason = input.Reason!.Trim();
             var decision = NewDecision(reviewCase, input.Decision, reason, command.Actor, transactions!);
-            var applied = await ApplyAsync(reviewCase, transactions!, input, decision, reason, command.Actor, ct);
+            decision.ReasonCode = input.ReasonCode;
+            var applied = reviewCase.Issue == ReviewIssue.AccountMovementConflict
+                ? await ApplyMovementConflictAsync(reviewCase, transactions!, input, decision, reason, command.Actor, ct)
+                : await ApplyAsync(reviewCase, transactions!, input, decision, reason, command.Actor, ct);
             if (applied is not null)
             {
                 return applied;
@@ -132,11 +198,12 @@ public class ReviewCaseService(
             reviewCase.ResolvedAt = ledger.Now();
             Touch(reviewCase);
             db.ReviewDecisions.Add(decision);
-            tenants.AddAudit(command.Actor, owner.Id, AuditActions.ReviewCaseResolved, new
+            tenants.AddAudit(command.Actor, ownerId, AuditActions.ReviewCaseResolved, new
             {
                 CaseId = reviewCase.Id,
                 Decision = MessageParseJob.Snake(input.Decision),
                 Reason = reason,
+                decision.ReasonCode,
                 decision.CanonicalTransactionId,
                 decision.CreatedTransactionId,
             });
@@ -169,7 +236,7 @@ public class ReviewCaseService(
             return ServiceError.PreconditionRequired("Send expected_version and expected_transaction_versions as shown to you.");
         }
 
-        return await commands.RunAsync(owner.Id, found.BankConnectionId, command, async () =>
+        return await commands.RunAsync(owner.Id, found.BankAccountId, command, async () =>
         {
             var (reviewCase, transactions, error) = await LoadForDecisionAsync(owner.Id, found.Id, version, input.TransactionVersions, ct);
             if (error is not null)
@@ -196,6 +263,14 @@ public class ReviewCaseService(
                 {
                     transaction.ManuallyConfirmed = false;
                     transaction.ConfirmationDecisionId = null;
+                }
+
+                if (reviewCase.Issue == ReviewIssue.AccountMovementConflict)
+                {
+                    // Reopening keeps the conflict classification; only a new operator decision lifts it.
+                    transaction.MovementConflict = true;
+                    transaction.AutoMatchBlocked = true;
+                    transaction.AutoMatchBlockReason = MatchResults.AccountMovementConflict;
                 }
 
                 await ledger.LoseEligibilityAsync(transaction, ct);
@@ -227,14 +302,29 @@ public class ReviewCaseService(
                     return NotApplicable("keep_existing resolves a disputed transaction.");
                 }
 
+                if (ConflictBlock(transactions) is { } confirmConflict)
+                {
+                    return confirmConflict;
+                }
+
                 Approve(transactions[0], decision);
                 return null;
 
             case ReviewAction.ConfirmDistinct when reviewCase.Issue == ReviewIssue.PossibleDuplicate && transactions.Count >= 2:
+                if (ConflictBlock(transactions) is { } distinctConflict)
+                {
+                    return distinctConflict;
+                }
+
                 transactions.ForEach(t => Approve(t, decision));
                 return null;
 
             case ReviewAction.MarkDuplicate when reviewCase.Issue == ReviewIssue.PossibleDuplicate && transactions.Count >= 2:
+                if (ConflictBlock(transactions.Where(t => t.Id == input.CanonicalTransactionId)) is { } canonicalConflict)
+                {
+                    return canonicalConflict;
+                }
+
                 return MarkDuplicates(transactions, input.CanonicalTransactionId, decision, reason, actor);
 
             case ReviewAction.Reject:
@@ -257,8 +347,74 @@ public class ReviewCaseService(
     }
 
     /// <summary>
+    /// The operator branch for <c>account_movement_conflict</c> (Feature 013). Only local evidence
+    /// is involved: the foreign record is never read into the decision, linked, or changed.
+    /// </summary>
+    private async Task<ServiceError?> ApplyMovementConflictAsync(
+        PaymentReviewCase reviewCase, List<IncomingTransaction> transactions, ResolveInput input, PaymentReviewDecision decision,
+        string reason, Actor actor, CancellationToken ct)
+    {
+        switch (input.Decision)
+        {
+            case ReviewAction.Reject:
+                if (input.ReasonCode != DuplicateOfForeignMovement)
+                {
+                    return ServiceError.Validation("invalid_reason_code", "reason_code",
+                        $"Rejecting an account movement conflict needs reason_code {DuplicateOfForeignMovement}.");
+                }
+
+                foreach (var transaction in transactions)
+                {
+                    if (transaction.Handling == TransactionHandling.Allocated)
+                    {
+                        return ServiceError.Conflict("transaction_already_allocated", "Revoke the allocation before rejecting the transaction.");
+                    }
+
+                    // A rejected copy, without any pointer to the other tenant's record.
+                    SetHandling(transaction, TransactionHandling.Rejected, reason, actor);
+                }
+
+                return null;
+
+            case ReviewAction.ConfirmDistinct:
+                if (reviewCase.ReasonCode == ParseReasons.BankReferenceConflict || transactions.Count == 0)
+                {
+                    return NotApplicable("A proven bank reference conflict cannot be approved as a distinct payment; reject it instead.");
+                }
+
+                if (transactions.Count != 1)
+                {
+                    return NotApplicable("confirm_distinct of an account movement conflict applies to exactly one local transaction.");
+                }
+
+                var local = transactions[0];
+                if (local.BankTransactionId is { } reference && await db.IncomingTransactions.AnyAsync(t => t.Id != local.Id
+                        && t.BankAccountId == local.BankAccountId && t.BankProfile == local.BankProfile && t.BankTransactionId == reference, ct))
+                {
+                    return NotApplicable("The bank reference is recorded by another transaction of this account; it cannot be a distinct payment.");
+                }
+
+                local.MovementConflict = false;
+                Approve(local, decision);
+                return null;
+
+            default:
+                return NotApplicable(
+                    $"An account movement conflict is decided by reject (reason_code {DuplicateOfForeignMovement}) or by confirm_distinct.");
+        }
+    }
+
+    /// <summary>A tenant decision may never approve a record that still carries a cross-tenant movement conflict.</summary>
+    private static ServiceError? ConflictBlock(IEnumerable<IncomingTransaction> approved) => approved.Any(t => t.MovementConflict)
+        ? ServiceError.Conflict(MatchResults.AccountMovementConflict,
+            "The transaction may describe a movement recorded by an earlier registration of the bank account; an operator must decide its account movement conflict first.")
+        : null;
+
+    /// <summary>
     /// Creates the transaction a person confirmed from an unaccepted candidate. The candidate
     /// must be complete and consistent with the routed account; only authentication may be missing.
+    /// Bank references and lookalikes are checked over the whole account (Feature 013): the
+    /// tenant's own records must be reviewed there, another tenant's block the confirmation.
     /// </summary>
     private async Task<ServiceError?> ConfirmCandidateAsync(PaymentReviewCase reviewCase, PaymentReviewDecision decision, CancellationToken ct)
     {
@@ -293,12 +449,32 @@ public class ReviewCaseService(
             return ServiceError.Conflict("message_already_recorded", "The message already supports a transaction; review that transaction instead.");
         }
 
-        var fingerprint = BankMessageEvaluator.ComparisonFingerprint(run.BankProfile!, connection.Id, candidate);
-        if (await db.IncomingTransactions.AnyAsync(t => t.BankConnectionId == connection.Id && t.ComparisonFingerprint == fingerprint
-                && t.Handling != TransactionHandling.Rejected && t.Handling != TransactionHandling.Duplicate, ct))
+        if (candidate.BankReference is { } reference
+            && await db.IncomingTransactions.AsNoTracking()
+                .Where(t => t.BankAccountId == reviewCase.BankAccountId && t.BankProfile == run.BankProfile && t.BankTransactionId == reference)
+                .Select(t => (Guid?)t.TenantId).SingleOrDefaultAsync(ct) is { } referenceOwner)
+        {
+            return referenceOwner == reviewCase.TenantId
+                ? ServiceError.Conflict("similar_transaction_exists",
+                    "A transaction with this bank reference is already recorded; if this is another copy of it, reject this candidate.")
+                : ServiceError.Conflict(MatchResults.AccountMovementConflict, ReviewCaseRecorder.ForeignReferenceMessage);
+        }
+
+        var fingerprint = BankMessageEvaluator.ComparisonFingerprint(run.BankProfile!, reviewCase.BankAccountId, candidate);
+        var lookalikeOwners = await db.IncomingTransactions.AsNoTracking()
+            .Where(t => t.BankAccountId == reviewCase.BankAccountId && t.ComparisonFingerprint == fingerprint
+                && t.Handling != TransactionHandling.Rejected && t.Handling != TransactionHandling.Duplicate
+                && (t.BankTransactionId == null || candidate.BankReference == null))
+            .Select(t => t.TenantId).Distinct().ToListAsync(ct);
+        if (lookalikeOwners.Contains(reviewCase.TenantId))
         {
             return ServiceError.Conflict("similar_transaction_exists",
                 "A transaction with the same amount, date, and symbol is already recorded; if this is another copy of it, reject this candidate.");
+        }
+
+        if (lookalikeOwners.Count > 0)
+        {
+            return ServiceError.Conflict(MatchResults.AccountMovementConflict, ReviewCaseRecorder.ForeignLookalikeMessage);
         }
 
         var trust = run.TrustEvidence is null ? null : JsonSerializer.Deserialize<TrustAssessment>(run.TrustEvidence, MessageParseJob.Json);
@@ -308,6 +484,7 @@ public class ReviewCaseService(
             Id = Guid.CreateVersion7(),
             TenantId = reviewCase.TenantId,
             BankConnectionId = reviewCase.BankConnectionId,
+            BankAccountId = reviewCase.BankAccountId,
             Amount = candidate.Amount!.Value,
             Currency = currency,
             VariableSymbol = candidate.VariableSymbol,
@@ -347,7 +524,8 @@ public class ReviewCaseService(
             InboundMessageId = message.Id,
             ParseRunId = run.Id,
             TenantId = transaction.TenantId,
-            BankConnectionId = transaction.BankConnectionId,
+            BankConnectionId = run.BankConnectionId,
+            BankAccountId = run.BankAccountId,
             CreatedAt = now,
         });
         recorder.AddMember(reviewCase, transaction.Id, null);

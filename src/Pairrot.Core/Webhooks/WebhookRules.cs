@@ -274,6 +274,7 @@ public static class WebhookEvents
             payment_request_id = change.PaymentRequestId,
             external_id = change.ExternalId,
             bank_connection_id = change.BankConnectionId,
+            bank_account_id = change.BankAccountId,
             sequence = change.Sequence,
             cause = Cause(change.Cause),
             previous = Summary(change.StatusBefore, change.PaidBefore, change.RemainingBefore, change.OverpaidBefore),

@@ -1,5 +1,7 @@
 # Feature 003: bank configuration and an inbound email address
 
+Changed by [Feature 013](./013-bank-account-identity-and-reuse.md) (implemented): an account is exclusive only among active registrations. Archiving or deleting the tenant releases it, an archived connection can be restored, and variable symbols and transaction identity are kept per physical account.
+
 ## Goal
 
 Let a user configure a tenant's bank account and request an email address intended for bank payment notifications.

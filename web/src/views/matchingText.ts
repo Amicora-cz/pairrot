@@ -21,6 +21,7 @@ export const MATCH_RESULTS: Record<string, string> = {
   ignored: 'ignored',
   rejected: 'rejected in a review',
   duplicate: 'a copy of another transaction',
+  account_movement_conflict: 'an earlier registration of this bank account may have recorded it; an operator decides',
 }
 
 export const ORIGIN_LABELS: Record<IncomingTransaction['origin_path'], string> = {

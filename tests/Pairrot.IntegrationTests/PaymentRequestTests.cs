@@ -335,7 +335,7 @@ public class PaymentRequestTests(PairrotFixture fx)
             var connection = await db.BankConnections.SingleAsync(b => b.Id == Guid.Parse(foreignConnection));
             db.PaymentRequests.Add(new PaymentRequest
             {
-                Id = Guid.CreateVersion7(), TenantId = tenant.Id, BankConnectionId = connection.Id, ExternalId = "forged",
+                Id = Guid.CreateVersion7(), TenantId = tenant.Id, BankConnectionId = connection.Id, BankAccountId = connection.BankAccountId, ExternalId = "forged",
                 AccountNumber = connection.AccountNumber, Iban = connection.Iban, Amount = 1, Currency = "CZK",
                 VariableSymbol = "1", VariableSymbolKey = "1", CreationFingerprint = new string('0', 64),
                 QrPayload = "SPD*1.0", QrFormat = "SPAYD", QrGeneratorVersion = PaymentRequestRules.QrGeneratorVersion,

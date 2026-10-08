@@ -30,6 +30,7 @@ public static class AuditActions
     public const string BankConnectionAddressAssigned = "bank_connection.address_assigned";
     public const string BankConnectionAddressReplaced = "bank_connection.address_replaced";
     public const string BankConnectionArchived = "bank_connection.archived";
+    public const string BankConnectionRestored = "bank_connection.restored";
     public const string InboundMessageFetchRetried = "inbound_message.fetch_retried";
     public const string InboundMessageRouted = "inbound_message.routed";
     public const string InboundMessageReprocessRequested = "inbound_message.reprocess_requested";

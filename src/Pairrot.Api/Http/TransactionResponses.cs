@@ -19,6 +19,7 @@ public sealed record IncomingTransactionResponse(
     Guid Id,
     Guid TenantId,
     Guid BankConnectionId,
+    Guid BankAccountId,
     long Amount,
     string Currency,
     string? VariableSymbol,
@@ -50,6 +51,7 @@ public sealed record IncomingTransactionResponse(
         t.Id,
         t.TenantId,
         t.BankConnectionId,
+        t.BankAccountId,
         t.Amount,
         t.Currency,
         t.VariableSymbol,
@@ -71,7 +73,7 @@ public sealed record IncomingTransactionResponse(
         matching is null ? null : TransactionMatchingResponse.From(t, matching),
         t.CreatedAt,
         t.UpdatedAt,
-        sources?.Select(s => new TransactionSourceResponse(s.InboundMessageId, s.ParseRunId, s.CreatedAt)).ToList());
+        sources?.Select(s => new TransactionSourceResponse(s.InboundMessageId, s.ParseRunId, s.BankConnectionId, s.CreatedAt)).ToList());
 
     public static string EvidenceOf(InboundSourceKind kind, InboundEnvironment environment) =>
         kind == InboundSourceKind.Fixture ? "fixture" : environment == InboundEnvironment.Live ? "live" : "test";
@@ -80,7 +82,8 @@ public sealed record IncomingTransactionResponse(
 }
 
 /// <param name="InboundMessageId">Readable at <c>.../inbound-messages/{id}</c> under the same tenant route.</param>
-public sealed record TransactionSourceResponse(Guid InboundMessageId, Guid ParseRunId, DateTimeOffset LinkedAt);
+/// <param name="BankConnectionId">The connection that received the message; another registration of the transaction's account is possible.</param>
+public sealed record TransactionSourceResponse(Guid InboundMessageId, Guid ParseRunId, Guid BankConnectionId, DateTimeOffset LinkedAt);
 
 /// <summary>
 /// One parse attempt. <see cref="Candidate"/> is what the parser extracted; under review it is a

@@ -54,11 +54,15 @@ public sealed record TransactionMatchingResponse(
 /// <param name="Method"><c>automatic</c> or <c>manual</c>.</param>
 /// <param name="State"><c>active</c> or <c>revoked</c>; revoked allocations stay as history.</param>
 /// <param name="Version">Send it as <c>expected_allocation_version</c> when revoking.</param>
+/// <param name="BankConnectionId">The transaction's connection.</param>
+/// <param name="PaymentRequestBankConnectionId">The request's connection: another registration of the same account is possible.</param>
 public sealed record AllocationResponse(
     Guid Id,
     Guid TransactionId,
     Guid PaymentRequestId,
     Guid BankConnectionId,
+    Guid PaymentRequestBankConnectionId,
+    Guid BankAccountId,
     long Amount,
     string Currency,
     string Method,
@@ -78,6 +82,8 @@ public sealed record AllocationResponse(
         a.TransactionId,
         a.PaymentRequestId,
         a.BankConnectionId,
+        a.PaymentRequestBankConnectionId,
+        a.BankAccountId,
         a.Amount,
         a.Currency,
         InboundMessageResponse.Snake(a.Method),
@@ -164,12 +170,13 @@ public sealed record PaymentChangeResponse(
 /// <param name="NextAfter">Pass as <c>after</c> for the next page; <c>null</c> on the last page.</param>
 public sealed record PaymentChangeListResponse(IReadOnlyList<PaymentChangeResponse> Items, int? NextAfter);
 
-/// <param name="Issue"><c>unverified_candidate</c>, <c>possible_duplicate</c>, or <c>disputed</c>.</param>
+/// <param name="Issue"><c>unverified_candidate</c>, <c>possible_duplicate</c>, <c>disputed</c>, or <c>account_movement_conflict</c> (decided by an operator).</param>
 /// <param name="Version">Send it as <c>expected_version</c> when resolving or reopening.</param>
 public sealed record ReviewCaseResponse(
     Guid Id,
     Guid TenantId,
     Guid BankConnectionId,
+    Guid BankAccountId,
     string Issue,
     string State,
     Guid? InboundMessageId,
@@ -185,6 +192,7 @@ public sealed record ReviewCaseResponse(
         c.Id,
         c.TenantId,
         c.BankConnectionId,
+        c.BankAccountId,
         InboundMessageResponse.Snake(c.Issue),
         InboundMessageResponse.Snake(c.State),
         c.InboundMessageId,
@@ -202,6 +210,7 @@ public sealed record ReviewDecisionResponse(
     Guid Id,
     string Action,
     string Reason,
+    string? ReasonCode,
     string Actor,
     int CaseVersion,
     JsonElement Members,
@@ -213,6 +222,7 @@ public sealed record ReviewDecisionResponse(
         d.Id,
         InboundMessageResponse.Snake(d.Action),
         d.Reason,
+        d.ReasonCode,
         d.Actor,
         d.CaseVersion,
         JsonDocument.Parse(d.Members).RootElement.Clone(),

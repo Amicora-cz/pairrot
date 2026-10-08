@@ -9,7 +9,11 @@ public class PaymentReviewCase
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>The receiving connection; same-tenant members may come from other connections of the account.</summary>
     public Guid BankConnectionId { get; set; }
+
+    public Guid BankAccountId { get; set; }
     public ReviewIssue Issue { get; set; }
     public ReviewCaseState State { get; set; } = ReviewCaseState.Open;
 
@@ -44,7 +48,13 @@ public class PaymentReviewCaseMember
     public Guid Id { get; set; }
     public Guid CaseId { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>The case's connection.</summary>
     public Guid BankConnectionId { get; set; }
+
+    /// <summary>The case's account; the member transaction or run may belong to any connection of it.</summary>
+    public Guid BankAccountId { get; set; }
+
     public Guid? TransactionId { get; set; }
     public Guid? ParseRunId { get; set; }
     public DateTimeOffset AddedAt { get; set; }
@@ -60,6 +70,9 @@ public class PaymentReviewDecision
 
     /// <summary>The check the user performed, e.g. "Checked the account statement in George".</summary>
     public required string Reason { get; set; }
+
+    /// <summary>A structured reason, e.g. <c>duplicate_of_foreign_movement</c> (Feature 013 operator decisions).</summary>
+    public string? ReasonCode { get; set; }
 
     public required string Actor { get; set; }
 
@@ -87,6 +100,12 @@ public enum ReviewIssue
 
     /// <summary>Later evidence contradicts a recorded transaction.</summary>
     Disputed,
+
+    /// <summary>
+    /// Feature 013: the movement may already be recorded by another tenant's registration of the
+    /// same account. The case holds local evidence only; an operator decides it.
+    /// </summary>
+    AccountMovementConflict,
 }
 
 public enum ReviewCaseState

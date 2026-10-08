@@ -12,7 +12,12 @@ public class MessageParseRun
     public Guid Id { get; set; }
     public Guid InboundMessageId { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>The receiving connection: the message's.</summary>
     public Guid BankConnectionId { get; set; }
+
+    /// <summary>The account of the receiving connection; the transaction it names may belong to another connection of it.</summary>
+    public Guid BankAccountId { get; set; }
 
     /// <summary>The parse job generation; unique per message.</summary>
     public int JobGeneration { get; set; }
@@ -64,7 +69,12 @@ public class IncomingTransaction
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>The connection that received the establishing message.</summary>
     public Guid BankConnectionId { get; set; }
+
+    /// <summary>The physical account (Feature 013); references and lookalikes are compared over it.</summary>
+    public Guid BankAccountId { get; set; }
 
     /// <summary>Positive minor units.</summary>
     public long Amount { get; set; }
@@ -122,6 +132,13 @@ public class IncomingTransaction
 
     /// <summary>A manual decision stops automatic matching until someone explicitly enables it again.</summary>
     public bool AutoMatchBlocked { get; set; }
+
+    /// <summary>
+    /// Feature 013: an earlier registration of the account by another tenant recorded a lookalike
+    /// movement. Nobody can allocate this record until an operator confirms it is a distinct
+    /// payment (<c>confirm_distinct</c> on its <c>account_movement_conflict</c> case).
+    /// </summary>
+    public bool MovementConflict { get; set; }
 
     public string? AutoMatchBlockReason { get; set; }
 
@@ -188,6 +205,10 @@ public class TransactionSource
     public Guid ParseRunId { get; set; }
 
     public Guid TenantId { get; set; }
+
+    /// <summary>The connection that received the message; may differ from the transaction's when both register one account.</summary>
     public Guid BankConnectionId { get; set; }
+
+    public Guid BankAccountId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }

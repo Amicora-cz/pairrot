@@ -330,17 +330,17 @@ public class AutomaticVariableSymbolTests(PairrotFixture fx)
         (await client.PostAsJsonAsync(OwnConnections, new { account_number = accountNumber ?? BankConnectionTests.NewAccount().AccountNumber })
             .ExpectAsync(HttpStatusCode.Created)).Str("id");
 
-    /// <summary>The connection's allocator cursor, or <c>null</c> before its first use.</summary>
+    /// <summary>The allocator cursor of the connection's account, or <c>null</c> before its first use.</summary>
     private async Task<long?> CursorAsync(string connectionId)
     {
         long? cursor = null;
         await fx.WithDbAsync(async db => cursor = await db.VariableSymbolAllocators
-            .Where(a => a.BankConnectionId == Guid.Parse(connectionId)).Select(a => (long?)a.NextCandidate).SingleOrDefaultAsync());
+            .Where(a => db.BankConnections.Any(b => b.Id == Guid.Parse(connectionId) && b.BankAccountId == a.BankAccountId)).Select(a => (long?)a.NextCandidate).SingleOrDefaultAsync());
         return cursor;
     }
 
     private Task SetCursorAsync(string connectionId, long cursor) => fx.WithDbAsync(db => db.VariableSymbolAllocators
-        .Where(a => a.BankConnectionId == Guid.Parse(connectionId)).ExecuteUpdateAsync(s => s.SetProperty(a => a.NextCandidate, cursor)));
+        .Where(a => db.BankConnections.Any(b => b.Id == Guid.Parse(connectionId) && b.BankAccountId == a.BankAccountId)).ExecuteUpdateAsync(s => s.SetProperty(a => a.NextCandidate, cursor)));
 
     private async Task<int> CountRequestsAsync(Guid tenantId, string externalId)
     {

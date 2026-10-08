@@ -7,6 +7,12 @@ import { PaymentQrPanel } from './PaymentQr'
 
 const STUB_NOTICE = 'Test address — no email is ever delivered to it.'
 
+const ARCHIVED_REASONS: Record<NonNullable<BankConnection['archived_reason']>, string> = {
+  user: 'archived by an administrator',
+  tenant_deleted: 'archived because the tenant was deleted',
+  operator: 'released by a Pairrot operator',
+}
+
 /**
  * Bank connections of one tenant: the selected tenant (`/v1/tenant/bank-connections`) or a
  * direct child (`/v1/subtenants/{id}/bank-connections`). The owner is always shown, so a parent
@@ -54,7 +60,16 @@ export function BankSettings({ basePath, owner, readOnly = false }: { basePath: 
       <ErrorText error={error} />
       {connections.length === 0 && !busy && <p className="muted">No bank connections yet.</p>}
       {connections.map((c) => (
-        <ConnectionCard key={c.id} basePath={basePath} owner={owner} connection={c} readOnly={readOnly} onChanged={replace} onArchived={() => run(reload)} />
+        <ConnectionCard
+          key={c.id}
+          basePath={basePath}
+          owner={owner}
+          connection={c}
+          readOnly={readOnly}
+          onChanged={replace}
+          onArchived={() => run(reload)}
+          onRestored={(restored) => (includeArchived ? replace(restored) : run(reload))}
+        />
       ))}
     </Section>
   )
@@ -129,6 +144,7 @@ function ConnectionCard({
   readOnly,
   onChanged,
   onArchived,
+  onRestored,
 }: {
   basePath: string
   owner: Tenant
@@ -136,6 +152,7 @@ function ConnectionCard({
   readOnly: boolean
   onChanged: (c: BankConnection) => void
   onArchived: () => Promise<void>
+  onRestored: (c: BankConnection) => void
 }) {
   const [label, setLabel] = useState(c.label ?? '')
   const [copied, setCopied] = useState(false)
@@ -174,12 +191,19 @@ function ConnectionCard({
         </dd>
         <dt>Currency</dt>
         <dd>{c.currency}</dd>
+        <dt>Bank account</dt>
+        <dd>
+          <code title="Every registration of this account shares this ID">{c.bank_account_id}</code>
+        </dd>
         <dt>Created</dt>
         <dd>{formatDate(c.created_at)}</dd>
         {archived && (
           <>
             <dt>Archived</dt>
-            <dd>{formatDate(c.archived_at)}</dd>
+            <dd>
+              {formatDate(c.archived_at)}
+              {c.archived_reason && `, ${ARCHIVED_REASONS[c.archived_reason]}`}
+            </dd>
           </>
         )}
         <dt>Notification address</dt>
@@ -273,7 +297,12 @@ function ConnectionCard({
             className="danger"
             disabled={busy}
             onClick={() => {
-              if (!confirm(`Archive ${c.account_number}? Its details and address are kept, but the account cannot be added again.`)) return
+              if (
+                !confirm(
+                  `Archive ${c.account_number}? Its details, address, and history are kept. Open payment requests stay payable if the account is registered again; new payment instructions need an active connection.`,
+                )
+              )
+                return
               void run(async () => {
                 await api('DELETE', path)
                 await onArchived()
@@ -282,6 +311,22 @@ function ConnectionCard({
           >
             Archive
           </button>
+        </div>
+      )}
+      {!readOnly && archived && (
+        <div className="row">
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                onRestored(await api<BankConnection>('POST', `${path}/restore`))
+              })
+            }
+          >
+            Restore
+          </button>
+          <span className="muted">Possible only while no other registration of this account is active.</span>
         </div>
       )}
       <ErrorText error={error} />

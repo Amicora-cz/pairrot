@@ -11,7 +11,16 @@ public class PaymentAllocation
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+
+    /// <summary>The transaction's connection.</summary>
     public Guid BankConnectionId { get; set; }
+
+    /// <summary>The request's connection; another registration of the same account is allowed (Feature 013).</summary>
+    public Guid PaymentRequestBankConnectionId { get; set; }
+
+    /// <summary>The account both connections register; enforced by the database.</summary>
+    public Guid BankAccountId { get; set; }
+
     public Guid TransactionId { get; set; }
     public Guid PaymentRequestId { get; set; }
 
@@ -65,7 +74,11 @@ public class PaymentChange
     public Guid Id { get; set; }
 
     public Guid TenantId { get; set; }
+
+    /// <summary>The request's connection.</summary>
     public Guid BankConnectionId { get; set; }
+
+    public Guid BankAccountId { get; set; }
     public Guid PaymentRequestId { get; set; }
 
     /// <summary>1, 2, ... per request.</summary>

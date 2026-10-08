@@ -1,6 +1,6 @@
 # Feature 012: automatic variable symbol generation
 
-Status: implemented.
+Status: implemented. Since [Feature 013](./013-bank-account-identity-and-reuse.md) the allocator and symbol uniqueness are per physical bank account instead of per connection.
 
 ## Goal and scope
 

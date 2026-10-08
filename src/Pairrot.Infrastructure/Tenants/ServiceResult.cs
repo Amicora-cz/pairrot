@@ -19,6 +19,9 @@ public enum ServiceErrorKind
 /// <param name="Field">The request field a validation error belongs to, if any.</param>
 public sealed record ServiceError(ServiceErrorKind Kind, string Code, string Message, string? Field = null)
 {
+    /// <summary>The caller's own existing bank connection the error is about (<c>bank_connection_exists</c>).</summary>
+    public Guid? BankConnectionId { get; init; }
+
     public static ServiceError Validation(string message) => new(ServiceErrorKind.Validation, "invalid_request", message);
 
     public static ServiceError Validation(string code, string field, string message) =>

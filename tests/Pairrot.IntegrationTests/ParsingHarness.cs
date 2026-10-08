@@ -79,10 +79,13 @@ public sealed class ParsingHarness
     public Task<T> WithDbAsync<T>(Func<PairrotDbContext, Task<T>> action) =>
         WithServicesAsync(services => action(services.GetRequiredService<PairrotDbContext>()));
 
-    /// <summary>A new connection of the tenant with a ready address bound to <paramref name="instance"/>.</summary>
-    public async Task<Account> CreateAccountAsync(Guid tenantId, string key, string instance = SmtpInstanceId)
+    /// <summary>
+    /// A new connection of the tenant with a ready address bound to <paramref name="instance"/>, for
+    /// a new account or, to register one again (Feature 013), for <paramref name="bank"/>.
+    /// </summary>
+    public async Task<Account> CreateAccountAsync(Guid tenantId, string key, string instance = SmtpInstanceId, CzechBankAccount? bank = null)
     {
-        var account = BankConnectionTests.NewAccount();
+        var account = bank ?? BankConnectionTests.NewAccount();
         var connection = await Client(key).PostAsJsonAsync("/v1/tenant/bank-connections", new { account_number = account.AccountNumber })
             .ExpectAsync(HttpStatusCode.Created);
         var connectionId = Guid.Parse(connection.Str("id"));

@@ -23,6 +23,7 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<TenantMembership> Memberships => Set<TenantMembership>();
     public DbSet<UserSession> Sessions => Set<UserSession>();
     public DbSet<UserAuditEvent> UserAuditEvents => Set<UserAuditEvent>();
+    public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
     public DbSet<BankConnection> BankConnections => Set<BankConnection>();
     public DbSet<PaymentRequest> PaymentRequests => Set<PaymentRequest>();
     public DbSet<VariableSymbolAllocator> VariableSymbolAllocators => Set<VariableSymbolAllocator>();

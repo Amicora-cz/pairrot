@@ -75,6 +75,21 @@ const string Usage = """
                                                allocations and that no disputed, duplicate,
                                                rejected, or reviewed receipt is counted.
 
+      accounts show <iban|account-number>      Every registration of a bank account across tenants,
+                                               with status, archived reason, and dates (Feature 13).
+      accounts release <connection-id> --reason <text>
+                                               Archive a registration with reason operator, e.g. when
+                                               the wrong tenant holds the account. Audited on the owner.
+
+      reviews show <case-id>                   A review case with its local evidence and the versions
+                                               a decision needs.
+      reviews resolve <case-id> --decision <d> --reason <text> --expected-version <n>
+                [--expected-transaction-versions <id=v,...>] [--reason-code <code>]
+                [--canonical-transaction-id <id>] [--idempotency-key <k>]
+                                               Decide a case as the operator. An account movement
+                                               conflict takes reject with --reason-code
+                                               duplicate_of_foreign_movement, or confirm_distinct.
+
       webhooks backfill <tenant> --from <time> --to <time> [--apply]
                                                Payment events in [from, to) within the tenant's
                                                webhook scope that its endpoint never received.
@@ -417,6 +432,105 @@ switch (args)
 
         Console.WriteLine(problems.Count == 0 ? "Payment totals and allocations are consistent." : $"{problems.Count} problem(s) found.");
         return problems.Count == 0 ? 0 : 1;
+    }
+
+    case ["accounts", "show", var accountText, ..]:
+    {
+        var result = await services.GetRequiredService<Pairrot.Infrastructure.Banking.BankConnectionService>().FindRegistrationsAsync(accountText);
+        if (result.Error is { } error)
+        {
+            return Fail(error);
+        }
+
+        var found = result.Value!;
+        Console.WriteLine($"Account      {found.Account.Id}  {found.Account.Iban}  {found.Account.AccountNumber}  since {found.Account.CreatedAt:u}");
+        foreach (var r in found.Registrations)
+        {
+            var c = r.Connection;
+            var owner = r.ParentExternalId is { } parent ? $"{parent}/{r.Owner.ExternalId}" : r.Owner.ExternalId;
+            var archived = c.ArchivedAt is { } at ? $", archived {at:u} ({Snake(c.ArchivedReason!.Value)})" : "";
+            Console.WriteLine($"Registration {c.Id}  {Snake(c.Status),-8}  tenant {owner} ({r.Owner.Id}, {Snake(r.Owner.Status)})  created {c.CreatedAt:u}{archived}");
+        }
+
+        return 0;
+    }
+
+    case ["accounts", "release", var connectionText, ..] when Guid.TryParse(connectionText, out var connectionId):
+        return Report(await services.GetRequiredService<Pairrot.Infrastructure.Banking.BankConnectionService>()
+                .ReleaseAsOperatorAsync(connectionId, options.GetValueOrDefault("reason"), Actor.Administrator(operatorName)),
+            c => $"Bank connection {c.Id} is archived ({Snake(c.ArchivedReason!.Value)}); its account can be registered again.");
+
+    case ["reviews", "show", var caseText, ..] when Guid.TryParse(caseText, out var caseId):
+    {
+        var result = await services.GetRequiredService<ReviewCaseService>().GetAsOperatorAsync(caseId);
+        if (result.Error is { } error)
+        {
+            return Fail(error);
+        }
+
+        var detail = result.Value!;
+        var c = detail.Case;
+        Console.WriteLine($"Case         {c.Id} ({Snake(c.Issue)}, {c.ReasonCode}) {Snake(c.State)}{(c.Resolution is { } r ? $": {Snake(r)}" : "")}, version {c.Version}");
+        Console.WriteLine($"Owner        tenant {c.TenantId}, connection {c.BankConnectionId}, account {c.BankAccountId}");
+        Console.WriteLine($"Reason       {c.ReasonMessage}");
+        foreach (var t in detail.Transactions.Select(v => v.Transaction))
+        {
+            Console.WriteLine($"Transaction  {t.Id} version {t.Version}: {t.Amount} {t.Currency}, VS {t.VariableSymbol ?? "-"}, booked {t.BookedOn:yyyy-MM-dd}, "
+                + $"ref {t.BankTransactionId ?? "-"}, {Snake(t.IngestionStatus)}, {Snake(t.Handling)}{(t.MovementConflict ? ", movement conflict" : "")}");
+        }
+
+        foreach (var run in detail.Runs)
+        {
+            Console.WriteLine($"Parse run    {run.Id} message {run.InboundMessageId}: {Snake(run.Outcome)} ({run.ReasonCode})");
+        }
+
+        foreach (var d in detail.Decisions)
+        {
+            Console.WriteLine($"Decision     {d.CreatedAt:u} {Snake(d.Action)}{(d.ReasonCode is { } code ? $" [{code}]" : "")} by {d.Actor}: {d.Reason}");
+        }
+
+        return 0;
+    }
+
+    case ["reviews", "resolve", var caseText, ..] when Guid.TryParse(caseText, out var caseId):
+    {
+        if (!Enum.TryParse<Pairrot.Core.Matching.ReviewAction>(
+                (options.GetValueOrDefault("decision") ?? "").Replace("_", ""), ignoreCase: true, out var decision)
+            || decision is Pairrot.Core.Matching.ReviewAction.Reopen or Pairrot.Core.Matching.ReviewAction.Superseded)
+        {
+            Console.Error.WriteLine("--decision must be confirm_payment, confirm_distinct, mark_duplicate, keep_existing, or reject.");
+            return 1;
+        }
+
+        if (!int.TryParse(options.GetValueOrDefault("expected-version"), out var version))
+        {
+            Console.Error.WriteLine("--expected-version is required (see reviews show).");
+            return 1;
+        }
+
+        var versions = new Dictionary<Guid, int>();
+        foreach (var pair in (options.GetValueOrDefault("expected-transaction-versions") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (pair.Split('=') is not [var idText, var versionText] || !Guid.TryParse(idText, out var id) || !int.TryParse(versionText, out var v))
+            {
+                Console.Error.WriteLine("--expected-transaction-versions must be a list of <transaction-id>=<version>, separated by commas.");
+                return 1;
+            }
+
+            versions[id] = v;
+        }
+
+        Guid? canonical = Guid.TryParse(options.GetValueOrDefault("canonical-transaction-id"), out var canonicalId) ? canonicalId : null;
+        var reasonCode = options.GetValueOrDefault("reason-code");
+        var key = options.GetValueOrDefault("idempotency-key") ?? Guid.NewGuid().ToString();
+        var input = new ResolveInput(decision, options.GetValueOrDefault("reason"), version, versions, canonical, reasonCode);
+        var command = new CommandRequest(key, "review_case.resolve",
+            ManualCommands.Fingerprint("review_case.resolve", caseId, Snake(decision), input.Reason, version,
+                versions.OrderBy(v => v.Key).Select(v => $"{v.Key}={v.Value}").ToArray(), canonical, reasonCode),
+            Actor.Administrator(operatorName));
+        return Report(await services.GetRequiredService<ReviewCaseService>().ResolveAsOperatorAsync(caseId, input, command,
+                detail => new { case_id = detail.Case.Id, state = Snake(detail.Case.State), resolution = detail.Case.Resolution is { } r ? Snake(r) : null }),
+            outcome => outcome.Replayed ? $"Already decided with this idempotency key: {outcome.Body}" : $"Decided: {outcome.Body}");
     }
 
     case ["webhooks", "backfill", var tenantReference, ..]:

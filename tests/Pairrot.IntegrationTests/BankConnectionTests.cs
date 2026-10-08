@@ -63,14 +63,18 @@ public class BankConnectionTests(PairrotFixture fx)
         var client = fx.Client(tenant.Key);
         var account = NewAccount();
 
-        await client.PostAsJsonAsync(Own, new { account_number = account.AccountNumber, iban = account.Iban, currency = "CZK" })
+        var first = await client.PostAsJsonAsync(Own, new { account_number = account.AccountNumber, iban = account.Iban, currency = "CZK" })
             .ExpectAsync(HttpStatusCode.Created);
 
-        // The same account in IBAN form, printed with spaces, is the same identity.
+        // The same account in IBAN form, printed with spaces, is the same identity; the error names
+        // the tenant's own existing connection (Feature 013).
         var printed = string.Join(' ', account.Iban.Chunk(4).Select(c => new string(c)));
-        await client.PostAsJsonAsync(Own, new { iban = printed }).ExpectErrorAsync(HttpStatusCode.Conflict, "duplicate_bank_connection");
+        var duplicate = await client.PostAsJsonAsync(Own, new { iban = printed });
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        var error = JsonNode.Parse(await duplicate.Content.ReadAsStringAsync())!["error"]!;
+        Assert.Equal(("bank_connection_exists", first.Str("id")), (error.Str("code"), error.Str("bank_connection_id")));
         await client.PostAsJsonAsync(Own, new { account_number = "000000-" + account.AccountNumber })
-            .ExpectErrorAsync(HttpStatusCode.Conflict, "duplicate_bank_connection");
+            .ExpectErrorAsync(HttpStatusCode.Conflict, "bank_connection_exists");
 
         var other = NewAccount();
         await ExpectFieldErrorAsync(client.PostAsJsonAsync(Own, new { account_number = BreakCheckDigit(other.AccountNumber) }),
@@ -251,8 +255,8 @@ public class BankConnectionTests(PairrotFixture fx)
         Assert.Contains(history["items"]!.AsArray(), e => e!.Str("action") == AuditActions.BankConnectionCreated);
     }
 
-    [Fact] // AC 11
-    public async Task Archiving_keeps_the_address_reserved_and_blocks_new_assignments()
+    [Fact] // AC 11; Feature 013 releases the account
+    public async Task Archiving_keeps_the_address_and_history_and_releases_the_account()
     {
         var studio = await fx.CreateChildAsync();
         var stranger = await fx.CreateChildAsync();
@@ -270,7 +274,7 @@ public class BankConnectionTests(PairrotFixture fx)
         await client.DeleteAsync(withoutPath).ExpectAsync(HttpStatusCode.NoContent);
 
         var archived = await client.GetAsync(path).ExpectAsync(HttpStatusCode.OK);
-        Assert.Equal("archived", archived.Str("status"));
+        Assert.Equal(("archived", "user"), (archived.Str("status"), archived.Str("archived_reason")));
         Assert.NotNull(archived["archived_at"]);
         Assert.Equal(address, archived.Str("inbound_address"));
 
@@ -286,9 +290,12 @@ public class BankConnectionTests(PairrotFixture fx)
         var all = await client.GetAsync($"{Own}?include_archived=true").ExpectAsync(HttpStatusCode.OK);
         Assert.Equal(2, all["items"]!.AsArray().Count);
 
-        // The account stays reserved for this tenant and unavailable to others.
-        await client.PostAsJsonAsync(Own, new { account_number = account.AccountNumber })
-            .ExpectErrorAsync(HttpStatusCode.Conflict, "duplicate_bank_connection");
+        // Feature 013: archiving released the account. The tenant registers it again on the same
+        // account identity; while that registration is active, others get the generic error.
+        var again = await client.PostAsJsonAsync(Own, new { account_number = account.AccountNumber }).ExpectAsync(HttpStatusCode.Created);
+        Assert.NotEqual(withAddress.Str("id"), again.Str("id"));
+        Assert.Equal(withAddress.Str("bank_account_id"), again.Str("bank_account_id"));
+        Assert.Null(again["inbound_address"]);
         await fx.Client(stranger.Key).PostAsJsonAsync(Own, new { account_number = account.AccountNumber })
             .ExpectErrorAsync(HttpStatusCode.Conflict, "account_unavailable");
 
@@ -320,11 +327,16 @@ public class BankConnectionTests(PairrotFixture fx)
         var ownResponse = await fx.Client(studio.Key).GetAsync(Own);
         Assert.Equal(HttpStatusCode.Forbidden, ownResponse.StatusCode);
 
+        await management.PostAsync($"{path}/restore", null).ExpectAsync(HttpStatusCode.OK); // active: nothing to restore
+
+        // Feature 013: deletion keeps the connection for history but archives it, releasing the account.
         await management.DeleteAsync($"/v1/subtenants/{studio.Id}").ExpectAsync(HttpStatusCode.NoContent);
         var kept = await management.GetAsync(path).ExpectAsync(HttpStatusCode.OK);
-        Assert.Equal("active", kept.Str("status"));
-        await management.DeleteAsync(path).ExpectErrorAsync(HttpStatusCode.Conflict, "tenant_deleted");
-        await management.PostAsync($"{path}/inbound-address", null).ExpectErrorAsync(HttpStatusCode.Conflict, "tenant_deleted");
+        Assert.Equal(("archived", "tenant_deleted"), (kept.Str("status"), kept.Str("archived_reason")));
+        await management.DeleteAsync(path).ExpectAsync(HttpStatusCode.NoContent);
+        await management.PostAsync($"{path}/inbound-address", null).ExpectErrorAsync(HttpStatusCode.Conflict, "bank_connection_archived");
+        await management.PatchJsonAsync(path, new { label = "x" }).ExpectErrorAsync(HttpStatusCode.Conflict, "tenant_deleted");
+        await management.PostAsync($"{path}/restore", null).ExpectErrorAsync(HttpStatusCode.Conflict, "tenant_not_active");
     }
 
     [Fact] // AC 12

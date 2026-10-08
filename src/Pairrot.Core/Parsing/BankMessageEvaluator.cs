@@ -77,6 +77,10 @@ public static class ParseReasons
     public const string ReprocessingChangedFacts = "reprocessing_changed_facts";
     public const string ReprocessingRejected = "reprocessing_rejected";
     public const string PossibleDuplicate = "possible_duplicate";
+
+    /// <summary>Feature 013: another tenant's registration of the account recorded this or a similar movement.</summary>
+    public const string AccountMovementConflict = "account_movement_conflict";
+
     public const string ProcessingFailed = "processing_failed";
 }
 
@@ -385,14 +389,19 @@ public static class BankMessageEvaluator
     }
 
     /// <summary>
-    /// A review hint, never an identity: SHA-256 of profile, connection, amount, currency, booking
-    /// date, and the variable symbol key. Distinct real transfers can share it.
+    /// A review hint, never an identity: SHA-256 of profile, physical bank account (Feature 013,
+    /// version <c>v2</c>; <c>v1</c> used the connection), amount, currency, booking date, and the
+    /// variable symbol key. Distinct real transfers can share it. The migration of Feature 013
+    /// recomputes stored values with the same canonical JSON in SQL; keep both in step.
     /// </summary>
-    public static string ComparisonFingerprint(string profile, Guid connectionId, TransferCandidate candidate) =>
+    public static string ComparisonFingerprint(string profile, Guid accountId, TransferCandidate candidate) =>
+        ComparisonFingerprint(profile, accountId, candidate.Amount, candidate.Currency, candidate.BookedOn, candidate.VariableSymbolKey);
+
+    public static string ComparisonFingerprint(
+        string profile, Guid accountId, long? amount, string? currency, DateOnly? bookedOn, string? variableSymbolKey) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new object?[]
         {
-            "v1", profile, connectionId.ToString("D"), candidate.Amount, candidate.Currency,
-            candidate.BookedOn?.ToString("yyyy-MM-dd"), candidate.VariableSymbolKey,
+            "v2", profile, accountId.ToString("D"), amount, currency, bookedOn?.ToString("yyyy-MM-dd"), variableSymbolKey,
         }))));
 
     private static DestinationEvidence CheckDestination(string? raw, IBankProfile profile, CzechBankAccount destination)

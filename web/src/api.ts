@@ -63,6 +63,8 @@ export interface ErrorAt {
 export interface BankConnection {
   id: string
   tenant_id: string
+  /** Feature 13: the physical account; every registration of the same account shares it. */
+  bank_account_id: string
   label: string | null
   account_number: string
   iban: string
@@ -84,6 +86,8 @@ export interface BankConnection {
   created_at: string
   updated_at: string
   archived_at: string | null
+  /** Why the connection is archived; `null` while it is active. */
+  archived_reason: 'user' | 'tenant_deleted' | 'operator' | null
   /** Address assignment only: a test address was retired for a new live one. */
   address_replaced?: boolean
 }
@@ -241,7 +245,11 @@ export interface Allocation {
   id: string
   transaction_id: string
   payment_request_id: string
+  /** The transaction's connection. */
   bank_connection_id: string
+  /** The request's connection: another registration of the same account is possible (Feature 13). */
+  payment_request_bank_connection_id: string
+  bank_account_id: string
   amount: number
   currency: string
   method: 'automatic' | 'manual'
@@ -292,13 +300,14 @@ export interface PaymentChange {
   created_at: string
 }
 
-export type ReviewIssue = 'unverified_candidate' | 'possible_duplicate' | 'disputed'
+export type ReviewIssue = 'unverified_candidate' | 'possible_duplicate' | 'disputed' | 'account_movement_conflict'
 export type ReviewDecision = 'confirm_payment' | 'confirm_distinct' | 'mark_duplicate' | 'keep_existing' | 'reject'
 
 export interface ReviewCase {
   id: string
   tenant_id: string
   bank_connection_id: string
+  bank_account_id: string
   issue: ReviewIssue
   state: 'open' | 'resolved'
   inbound_message_id: string | null
@@ -336,6 +345,7 @@ export interface IncomingTransaction {
   id: string
   tenant_id: string
   bank_connection_id: string
+  bank_account_id: string
   amount: number
   currency: string
   variable_symbol: string | null
@@ -408,6 +418,7 @@ export interface PaymentRequest {
   id: string
   tenant_id: string
   bank_connection_id: string
+  bank_account_id: string
   external_id: string
   account_number: string
   iban: string

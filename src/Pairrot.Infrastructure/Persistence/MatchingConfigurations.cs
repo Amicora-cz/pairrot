@@ -9,7 +9,8 @@ using Pairrot.Core.Transactions;
 namespace Pairrot.Infrastructure.Persistence;
 
 // Feature 009: allocations, payment changes, review cases, and manual command receipts. Both
-// sides of every link carry the same tenant and bank connection, enforced by composite keys.
+// sides of every link carry the same tenant and, since Feature 013, the same bank account; the
+// connections of one link may differ when both register that account. Enforced by composite keys.
 
 internal sealed class PaymentAllocationConfiguration : IEntityTypeConfiguration<PaymentAllocation>
 {
@@ -53,8 +54,22 @@ internal sealed class PaymentAllocationConfiguration : IEntityTypeConfiguration<
 
         builder.HasOne<PaymentRequest>()
             .WithMany()
-            .HasForeignKey(a => new { a.PaymentRequestId, a.TenantId, a.BankConnectionId })
+            .HasForeignKey(a => new { a.PaymentRequestId, a.TenantId, a.PaymentRequestBankConnectionId })
             .HasPrincipalKey(p => new { p.Id, p.TenantId, p.BankConnectionId })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Both connections belong to the tenant and register the one stated account: an allocation
+        // across accounts or tenants is rejected by the database as well as by the service.
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(a => new { a.TenantId, a.BankConnectionId, a.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(a => new { a.TenantId, a.PaymentRequestBankConnectionId, a.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         // A receipt counts at most once.
@@ -96,6 +111,12 @@ internal sealed class PaymentChangeConfiguration : IEntityTypeConfiguration<Paym
             .WithMany()
             .HasForeignKey(c => new { c.PaymentRequestId, c.TenantId, c.BankConnectionId })
             .HasPrincipalKey(p => new { p.Id, p.TenantId, p.BankConnectionId })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(c => new { c.TenantId, c.BankConnectionId, c.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<PaymentAllocation>()
@@ -142,11 +163,11 @@ internal sealed class PaymentReviewCaseConfiguration : IEntityTypeConfiguration<
 
         builder.HasOne<BankConnection>()
             .WithMany()
-            .HasForeignKey(c => new { c.TenantId, c.BankConnectionId })
-            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .HasForeignKey(c => new { c.TenantId, c.BankConnectionId, c.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasAlternateKey(c => new { c.Id, c.TenantId, c.BankConnectionId });
+        builder.HasAlternateKey(c => new { c.Id, c.TenantId, c.BankConnectionId, c.BankAccountId });
 
         // One case per reviewed message; a new question about it reopens that case.
         builder.HasIndex(c => c.InboundMessageId)
@@ -169,20 +190,21 @@ internal sealed class PaymentReviewCaseMemberConfiguration : IEntityTypeConfigur
 
         builder.HasOne<PaymentReviewCase>()
             .WithMany()
-            .HasForeignKey(m => new { m.CaseId, m.TenantId, m.BankConnectionId })
-            .HasPrincipalKey(c => new { c.Id, c.TenantId, c.BankConnectionId })
+            .HasForeignKey(m => new { m.CaseId, m.TenantId, m.BankConnectionId, m.BankAccountId })
+            .HasPrincipalKey(c => new { c.Id, c.TenantId, c.BankConnectionId, c.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Members of one tenant may come from any registration of the case's account.
         builder.HasOne<IncomingTransaction>()
             .WithMany()
-            .HasForeignKey(m => new { m.TransactionId, m.TenantId, m.BankConnectionId })
-            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankConnectionId })
+            .HasForeignKey(m => new { m.TransactionId, m.TenantId, m.BankAccountId })
+            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<MessageParseRun>()
             .WithMany()
-            .HasForeignKey(m => new { m.ParseRunId, m.TenantId, m.BankConnectionId })
-            .HasPrincipalKey(r => new { r.Id, r.TenantId, r.BankConnectionId })
+            .HasForeignKey(m => new { m.ParseRunId, m.TenantId, m.BankAccountId })
+            .HasPrincipalKey(r => new { r.Id, r.TenantId, r.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(m => new { m.CaseId, m.TransactionId })
@@ -211,6 +233,7 @@ internal sealed class PaymentReviewDecisionConfiguration : IEntityTypeConfigurat
         builder.Property(d => d.Id).ValueGeneratedNever();
         builder.Property(d => d.Action).HasConversion<SnakeCaseEnumConverter<ReviewAction>>().HasMaxLength(30);
         builder.Property(d => d.Reason).HasMaxLength(MatchingRules.MaxReasonLength);
+        builder.Property(d => d.ReasonCode).HasMaxLength(50);
         builder.Property(d => d.Actor).HasMaxLength(200);
 
         builder.HasOne<PaymentReviewCase>()

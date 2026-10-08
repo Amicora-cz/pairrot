@@ -127,6 +127,59 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.ToTable("user_tokens", (string)null);
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Banking.BankAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("account_number");
+
+                    b.Property<string>("BankCode")
+                        .IsRequired()
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)")
+                        .HasColumnName("bank_code");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<string>("Iban")
+                        .IsRequired()
+                        .HasMaxLength(34)
+                        .HasColumnType("character varying(34)")
+                        .HasColumnName("iban");
+
+                    b.HasKey("Id")
+                        .HasName("pk_bank_accounts");
+
+                    b.HasIndex("Iban")
+                        .IsUnique()
+                        .HasDatabaseName("bank_accounts_iban_unique");
+
+                    b.ToTable("bank_accounts", null, t =>
+                        {
+                            t.HasCheckConstraint("bank_accounts_account_number_not_blank", "btrim(account_number) <> ''");
+
+                            t.HasCheckConstraint("bank_accounts_bank_code_format", "bank_code ~ '^[0-9]{4}$'");
+
+                            t.HasCheckConstraint("bank_accounts_currency_valid", "currency = 'CZK'");
+
+                            t.HasCheckConstraint("bank_accounts_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Core.Banking.BankConnection", b =>
                 {
                     b.Property<Guid>("Id")
@@ -142,6 +195,15 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ArchivedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("archived_at");
+
+                    b.Property<string>("ArchivedReason")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("archived_reason");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -190,9 +252,16 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasAlternateKey("TenantId", "Id")
                         .HasName("ak_bank_connections_tenant_id_id");
 
-                    b.HasIndex("Iban")
+                    b.HasAlternateKey("TenantId", "Id", "BankAccountId")
+                        .HasName("ak_bank_connections_tenant_id_id_bank_account_id");
+
+                    b.HasIndex("BankAccountId")
                         .IsUnique()
-                        .HasDatabaseName("bank_connections_iban_unique");
+                        .HasDatabaseName("bank_connections_one_active_per_account")
+                        .HasFilter("status = 'active'");
+
+                    b.HasIndex("Iban")
+                        .HasDatabaseName("bank_connections_iban_idx");
 
                     b.HasIndex("TenantId", "Status", "Id")
                         .HasDatabaseName("bank_connections_tenant_idx");
@@ -201,7 +270,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("bank_connections_account_number_not_blank", "btrim(account_number) <> ''");
 
-                            t.HasCheckConstraint("bank_connections_archive_consistent", "(status = 'archived' AND archived_at IS NOT NULL) OR (status <> 'archived' AND archived_at IS NULL)");
+                            t.HasCheckConstraint("bank_connections_archive_consistent", "(status = 'archived' AND archived_at IS NOT NULL AND archived_reason IS NOT NULL) OR (status <> 'archived' AND archived_at IS NULL AND archived_reason IS NULL)");
+
+                            t.HasCheckConstraint("bank_connections_archived_reason_valid", "archived_reason IS NULL OR archived_reason IN ('user', 'tenant_deleted', 'operator')");
 
                             t.HasCheckConstraint("bank_connections_currency_valid", "currency = 'CZK'");
 
@@ -1038,6 +1109,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("amount");
 
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
+
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("bank_connection_id");
@@ -1069,6 +1144,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)")
                         .HasColumnName("method");
+
+                    b.Property<Guid>("PaymentRequestBankConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_request_bank_connection_id");
 
                     b.Property<Guid>("PaymentRequestId")
                         .HasColumnType("uuid")
@@ -1128,8 +1207,14 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("PaymentRequestId", "Id")
                         .HasDatabaseName("payment_allocations_request_idx");
 
-                    b.HasIndex("PaymentRequestId", "TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_payment_allocations_payment_request_id_tenant_id_bank_conne");
+                    b.HasIndex("PaymentRequestId", "TenantId", "PaymentRequestBankConnectionId")
+                        .HasDatabaseName("ix_payment_allocations_payment_request_id_tenant_id_payment_re");
+
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_allocations_tenant_id_bank_connection_id_bank_accou");
+
+                    b.HasIndex("TenantId", "PaymentRequestBankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_allocations_tenant_id_payment_request_bank_connecti");
 
                     b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
                         .HasDatabaseName("ix_payment_allocations_transaction_id_tenant_id_bank_connectio");
@@ -1169,6 +1254,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("AllocationId")
                         .HasColumnType("uuid")
                         .HasColumnName("allocation_id");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -1273,6 +1362,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("PaymentRequestId", "TenantId", "BankConnectionId")
                         .HasDatabaseName("ix_payment_request_changes_payment_request_id_tenant_id_bank_c");
 
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_request_changes_tenant_id_bank_connection_id_bank_a");
+
                     b.ToTable("payment_request_changes", null, t =>
                         {
                             t.HasCheckConstraint("payment_request_changes_amounts_valid", "paid_before >= 0 AND paid_after >= 0 AND overpaid_before >= 0 AND overpaid_after >= 0");
@@ -1292,6 +1384,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -1360,23 +1456,23 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_payment_review_cases");
 
-                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
-                        .HasName("ak_payment_review_cases_id_tenant_id_bank_connection_id");
+                    b.HasAlternateKey("Id", "TenantId", "BankConnectionId", "BankAccountId")
+                        .HasName("ak_payment_review_cases_id_tenant_id_bank_connection_id_bank_a");
 
                     b.HasIndex("InboundMessageId")
                         .IsUnique()
                         .HasDatabaseName("payment_review_cases_message_unique")
                         .HasFilter("inbound_message_id IS NOT NULL");
 
-                    b.HasIndex("TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_payment_review_cases_tenant_id_bank_connection_id");
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_review_cases_tenant_id_bank_connection_id_bank_acco");
 
                     b.HasIndex("TenantId", "State", "Id")
                         .HasDatabaseName("payment_review_cases_tenant_state_idx");
 
                     b.ToTable("payment_review_cases", null, t =>
                         {
-                            t.HasCheckConstraint("payment_review_cases_issue_valid", "issue IN ('unverified_candidate', 'possible_duplicate', 'disputed')");
+                            t.HasCheckConstraint("payment_review_cases_issue_valid", "issue IN ('unverified_candidate', 'possible_duplicate', 'disputed', 'account_movement_conflict')");
 
                             t.HasCheckConstraint("payment_review_cases_message_consistent", "(issue = 'unverified_candidate') = (inbound_message_id IS NOT NULL)");
 
@@ -1399,6 +1495,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("AddedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("added_at");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -1436,14 +1536,14 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("payment_review_case_members_transaction_unique")
                         .HasFilter("transaction_id IS NOT NULL");
 
-                    b.HasIndex("CaseId", "TenantId", "BankConnectionId")
+                    b.HasIndex("ParseRunId", "TenantId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_review_case_members_parse_run_id_tenant_id_bank_acc");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_review_case_members_transaction_id_tenant_id_bank_a");
+
+                    b.HasIndex("CaseId", "TenantId", "BankConnectionId", "BankAccountId")
                         .HasDatabaseName("ix_payment_review_case_members_case_id_tenant_id_bank_connecti");
-
-                    b.HasIndex("ParseRunId", "TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_payment_review_case_members_parse_run_id_tenant_id_bank_con");
-
-                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_payment_review_case_members_transaction_id_tenant_id_bank_c");
 
                     b.ToTable("payment_review_case_members", null, t =>
                         {
@@ -1500,6 +1600,11 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("reason");
 
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("reason_code");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -1533,6 +1638,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<long>("Amount")
                         .HasColumnType("bigint")
                         .HasColumnName("amount");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -1664,15 +1773,15 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
                         .HasName("ak_payment_requests_id_tenant_id_bank_connection_id");
 
-                    b.HasIndex("BankConnectionId", "VariableSymbolKey")
+                    b.HasIndex("BankAccountId", "VariableSymbolKey")
                         .IsUnique()
-                        .HasDatabaseName("payment_requests_connection_variable_symbol_unique");
+                        .HasDatabaseName("payment_requests_account_variable_symbol_unique");
 
-                    b.HasIndex("BankConnectionId", "VariableSymbolNumber")
-                        .HasDatabaseName("payment_requests_connection_variable_symbol_number_idx");
+                    b.HasIndex("BankAccountId", "VariableSymbolNumber")
+                        .HasDatabaseName("payment_requests_account_variable_symbol_number_idx");
 
-                    b.HasIndex("TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_payment_requests_tenant_id_bank_connection_id");
+                    b.HasIndex("BankConnectionId", "Id")
+                        .HasDatabaseName("payment_requests_connection_idx");
 
                     b.HasIndex("TenantId", "ExternalId")
                         .IsUnique()
@@ -1680,6 +1789,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "Id")
                         .HasDatabaseName("payment_requests_tenant_idx");
+
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_payment_requests_tenant_id_bank_connection_id_bank_account_");
 
                     b.HasIndex("TenantId", "Status", "DueAt")
                         .HasDatabaseName("payment_requests_tenant_due_idx");
@@ -1721,15 +1833,15 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Payments.VariableSymbolAllocator", b =>
                 {
-                    b.Property<Guid>("BankConnectionId")
+                    b.Property<Guid>("BankAccountId")
                         .HasColumnType("uuid")
-                        .HasColumnName("bank_connection_id");
+                        .HasColumnName("bank_account_id");
 
                     b.Property<long>("NextCandidate")
                         .HasColumnType("bigint")
                         .HasColumnName("next_candidate");
 
-                    b.HasKey("BankConnectionId")
+                    b.HasKey("BankAccountId")
                         .HasName("pk_variable_symbol_allocators");
 
                     b.ToTable("variable_symbol_allocators", null, t =>
@@ -1955,6 +2067,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("auto_match_blocked");
 
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
+
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
                         .HasColumnName("bank_connection_id");
@@ -2057,6 +2173,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("message");
 
+                    b.Property<bool>("MovementConflict")
+                        .HasColumnType("boolean")
+                        .HasColumnName("movement_conflict");
+
                     b.Property<DateTimeOffset?>("OccurredAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
@@ -2129,29 +2249,35 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_incoming_transactions");
 
+                    b.HasAlternateKey("Id", "TenantId", "BankAccountId")
+                        .HasName("ak_incoming_transactions_id_tenant_id_bank_account_id");
+
                     b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
                         .HasName("ak_incoming_transactions_id_tenant_id_bank_connection_id");
 
-                    b.HasIndex("BankConnectionId", "ComparisonFingerprint")
-                        .HasDatabaseName("incoming_transactions_fingerprint_idx");
+                    b.HasIndex("BankAccountId", "ComparisonFingerprint")
+                        .HasDatabaseName("incoming_transactions_account_fingerprint_idx");
 
-                    b.HasIndex("BankConnectionId", "VariableSymbolKey")
+                    b.HasIndex("BankAccountId", "VariableSymbolKey")
                         .HasDatabaseName("incoming_transactions_unallocated_symbol_idx")
                         .HasFilter("handling = 'unallocated'");
 
-                    b.HasIndex("TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_incoming_transactions_tenant_id_bank_connection_id");
+                    b.HasIndex("BankConnectionId", "Id")
+                        .HasDatabaseName("incoming_transactions_connection_idx");
 
                     b.HasIndex("TenantId", "Id")
                         .HasDatabaseName("incoming_transactions_tenant_idx");
 
-                    b.HasIndex("BankConnectionId", "BankProfile", "BankTransactionId")
+                    b.HasIndex("BankAccountId", "BankProfile", "BankTransactionId")
                         .IsUnique()
-                        .HasDatabaseName("incoming_transactions_bank_reference_unique")
+                        .HasDatabaseName("incoming_transactions_account_bank_reference_unique")
                         .HasFilter("bank_transaction_id IS NOT NULL");
 
-                    b.HasIndex("CanonicalTransactionId", "TenantId", "BankConnectionId")
+                    b.HasIndex("CanonicalTransactionId", "TenantId", "BankAccountId")
                         .HasDatabaseName("ix_incoming_transactions_canonical_transaction_id_tenant_id_ba");
+
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_incoming_transactions_tenant_id_bank_connection_id_bank_acc");
 
                     b.ToTable("incoming_transactions", null, t =>
                         {
@@ -2186,6 +2312,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -2292,6 +2422,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_message_parse_runs");
 
+                    b.HasAlternateKey("Id", "TenantId", "BankAccountId")
+                        .HasName("ak_message_parse_runs_id_tenant_id_bank_account_id");
+
                     b.HasAlternateKey("Id", "TenantId", "BankConnectionId")
                         .HasName("ak_message_parse_runs_id_tenant_id_bank_connection_id");
 
@@ -2299,11 +2432,11 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("message_parse_runs_message_generation_unique");
 
-                    b.HasIndex("TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_message_parse_runs_tenant_id_bank_connection_id");
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_message_parse_runs_tenant_id_bank_connection_id_bank_accoun");
 
-                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_message_parse_runs_transaction_id_tenant_id_bank_connection");
+                    b.HasIndex("TransactionId", "TenantId", "BankAccountId")
+                        .HasDatabaseName("ix_message_parse_runs_transaction_id_tenant_id_bank_account_id");
 
                     b.ToTable("message_parse_runs", null, t =>
                         {
@@ -2328,6 +2461,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<Guid>("BankAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("bank_account_id");
 
                     b.Property<Guid>("BankConnectionId")
                         .HasColumnType("uuid")
@@ -2366,8 +2503,11 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.HasIndex("ParseRunId", "TenantId", "BankConnectionId")
                         .HasDatabaseName("ix_transaction_sources_parse_run_id_tenant_id_bank_connection_");
 
-                    b.HasIndex("TransactionId", "TenantId", "BankConnectionId")
-                        .HasDatabaseName("ix_transaction_sources_transaction_id_tenant_id_bank_connectio");
+                    b.HasIndex("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasDatabaseName("ix_transaction_sources_tenant_id_bank_connection_id_bank_accou");
+
+                    b.HasIndex("TransactionId", "TenantId", "BankAccountId")
+                        .HasDatabaseName("ix_transaction_sources_transaction_id_tenant_id_bank_account_id");
 
                     b.ToTable("transaction_sources", (string)null);
                 });
@@ -3125,6 +3265,13 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Banking.BankConnection", b =>
                 {
+                    b.HasOne("Pairrot.Core.Banking.BankAccount", null)
+                        .WithMany()
+                        .HasForeignKey("BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_bank_connections_bank_accounts_bank_account_id");
+
                     b.HasOne("Pairrot.Core.Tenants.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -3215,11 +3362,27 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                 {
                     b.HasOne("Pairrot.Core.Payments.PaymentRequest", null)
                         .WithMany()
-                        .HasForeignKey("PaymentRequestId", "TenantId", "BankConnectionId")
+                        .HasForeignKey("PaymentRequestId", "TenantId", "PaymentRequestBankConnectionId")
                         .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payment_allocations_payment_requests_payment_request_id_ten");
+
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_allocations_bank_connections_tenant_id_bank_connect");
+
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "PaymentRequestBankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_allocations_bank_connections_tenant_id_payment_requ");
 
                     b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
                         .WithMany()
@@ -3245,14 +3408,22 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payment_request_changes_payment_requests_payment_request_id");
+
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_request_changes_bank_connections_tenant_id_bank_con");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCase", b =>
                 {
                     b.HasOne("Pairrot.Core.Banking.BankConnection", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "BankConnectionId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payment_review_cases_bank_connections_tenant_id_bank_connec");
@@ -3260,27 +3431,27 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewCaseMember", b =>
                 {
-                    b.HasOne("Pairrot.Core.Matching.PaymentReviewCase", null)
-                        .WithMany()
-                        .HasForeignKey("CaseId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("fk_payment_review_case_members_payment_review_cases_case_id_te");
-
                     b.HasOne("Pairrot.Core.Transactions.MessageParseRun", null)
                         .WithMany()
-                        .HasForeignKey("ParseRunId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .HasForeignKey("ParseRunId", "TenantId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_payment_review_case_members_message_parse_runs_parse_run_id");
 
                     b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
                         .WithMany()
-                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .HasForeignKey("TransactionId", "TenantId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_payment_review_case_members_incoming_transactions_transacti");
+
+                    b.HasOne("Pairrot.Core.Matching.PaymentReviewCase", null)
+                        .WithMany()
+                        .HasForeignKey("CaseId", "TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payment_review_case_members_payment_review_cases_case_id_te");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Matching.PaymentReviewDecision", b =>
@@ -3304,8 +3475,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                     b.HasOne("Pairrot.Core.Banking.BankConnection", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "BankConnectionId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_payment_requests_bank_connections_tenant_id_bank_connection");
@@ -3313,12 +3484,12 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Payments.VariableSymbolAllocator", b =>
                 {
-                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                    b.HasOne("Pairrot.Core.Banking.BankAccount", null)
                         .WithOne()
-                        .HasForeignKey("Pairrot.Core.Payments.VariableSymbolAllocator", "BankConnectionId")
+                        .HasForeignKey("Pairrot.Core.Payments.VariableSymbolAllocator", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("fk_variable_symbol_allocators_bank_connections_bank_connection");
+                        .HasConstraintName("fk_variable_symbol_allocators_bank_accounts_bank_account_id");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Tenants.Tenant", b =>
@@ -3368,36 +3539,36 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Pairrot.Core.Transactions.IncomingTransaction", b =>
                 {
+                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalTransactionId", "TenantId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_incoming_transactions_incoming_transactions_canonical_trans");
+
                     b.HasOne("Pairrot.Core.Banking.BankConnection", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "BankConnectionId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_incoming_transactions_bank_connections_tenant_id_bank_conne");
-
-                    b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
-                        .WithMany()
-                        .HasForeignKey("CanonicalTransactionId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("fk_incoming_transactions_incoming_transactions_canonical_trans");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Transactions.MessageParseRun", b =>
                 {
                     b.HasOne("Pairrot.Core.Banking.BankConnection", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "BankConnectionId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_message_parse_runs_bank_connections_tenant_id_bank_connecti");
 
                     b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
                         .WithMany()
-                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .HasForeignKey("TransactionId", "TenantId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_message_parse_runs_incoming_transactions_transaction_id_ten");
                 });
@@ -3412,10 +3583,18 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_transaction_sources_message_parse_runs_parse_run_id_tenant_");
 
+                    b.HasOne("Pairrot.Core.Banking.BankConnection", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "BankConnectionId", "BankAccountId")
+                        .HasPrincipalKey("TenantId", "Id", "BankAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_transaction_sources_bank_connections_tenant_id_bank_connect");
+
                     b.HasOne("Pairrot.Core.Transactions.IncomingTransaction", null)
                         .WithMany()
-                        .HasForeignKey("TransactionId", "TenantId", "BankConnectionId")
-                        .HasPrincipalKey("Id", "TenantId", "BankConnectionId")
+                        .HasForeignKey("TransactionId", "TenantId", "BankAccountId")
+                        .HasPrincipalKey("Id", "TenantId", "BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_transaction_sources_incoming_transactions_transaction_id_te");

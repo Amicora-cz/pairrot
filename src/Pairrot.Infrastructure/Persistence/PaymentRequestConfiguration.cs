@@ -11,7 +11,7 @@ namespace Pairrot.Infrastructure.Persistence;
 internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<PaymentRequest>
 {
     public const string ExternalIdUniqueIndex = "payment_requests_tenant_external_id_unique";
-    public const string VariableSymbolUniqueIndex = "payment_requests_connection_variable_symbol_unique";
+    public const string VariableSymbolUniqueIndex = "payment_requests_account_variable_symbol_unique";
 
     /// <summary>The symbol key as a number, for the allocator's indexed gap search (Feature 012); computed by the database.</summary>
     public const string VariableSymbolNumberProperty = "VariableSymbolNumber";
@@ -82,22 +82,24 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
             .HasForeignKey(p => p.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // The connection must belong to the same tenant, even if application code got it wrong.
+        // The connection must belong to the same tenant and the stated account, even if application code got it wrong.
         builder.HasOne<BankConnection>()
             .WithMany()
-            .HasForeignKey(p => new { p.TenantId, p.BankConnectionId })
-            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .HasForeignKey(p => new { p.TenantId, p.BankConnectionId, p.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Lets allocations and changes reference a request together with its owner and account.
+        // Lets allocations and changes reference a request together with its owner and connection.
         builder.HasAlternateKey(p => new { p.Id, p.TenantId, p.BankConnectionId });
 
         builder.HasIndex(p => new { p.TenantId, p.ExternalId }).IsUnique().HasDatabaseName(ExternalIdUniqueIndex);
 
-        // Cancelled requests keep their symbol: a late payment must still be attributable.
-        builder.HasIndex(p => new { p.BankConnectionId, p.VariableSymbolKey }).IsUnique().HasDatabaseName(VariableSymbolUniqueIndex);
-        builder.HasIndex(nameof(PaymentRequest.BankConnectionId), VariableSymbolNumberProperty)
-            .HasDatabaseName("payment_requests_connection_variable_symbol_number_idx");
+        // Cancelled requests keep their symbol: a late payment must still be attributable. Feature
+        // 013: unique per physical account, over every registration of it in any tenant.
+        builder.HasIndex(p => new { p.BankAccountId, p.VariableSymbolKey }).IsUnique().HasDatabaseName(VariableSymbolUniqueIndex);
+        builder.HasIndex(nameof(PaymentRequest.BankAccountId), VariableSymbolNumberProperty)
+            .HasDatabaseName("payment_requests_account_variable_symbol_number_idx");
+        builder.HasIndex(p => new { p.BankConnectionId, p.Id }).HasDatabaseName("payment_requests_connection_idx");
 
         // IDs are UUIDv7, so (tenant_id, id) also serves listing by creation time.
         builder.HasIndex(p => new { p.TenantId, p.Id }).HasDatabaseName("payment_requests_tenant_idx");
@@ -106,7 +108,7 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
     }
 }
 
-// Feature 012: automatic variable symbols, one allocator per bank connection.
+// Feature 012: automatic variable symbols; Feature 013: one allocator per physical account.
 
 internal sealed class VariableSymbolAllocatorConfiguration : IEntityTypeConfiguration<VariableSymbolAllocator>
 {
@@ -116,12 +118,12 @@ internal sealed class VariableSymbolAllocatorConfiguration : IEntityTypeConfigur
             "variable_symbol_allocators_next_candidate_range",
             $"next_candidate BETWEEN 1 AND {PaymentRequestRules.ExhaustedVariableSymbolCursor}"));
 
-        builder.HasKey(a => a.BankConnectionId);
-        builder.Property(a => a.BankConnectionId).ValueGeneratedNever();
+        builder.HasKey(a => a.BankAccountId);
+        builder.Property(a => a.BankAccountId).ValueGeneratedNever();
 
-        builder.HasOne<BankConnection>()
+        builder.HasOne<BankAccount>()
             .WithOne()
-            .HasForeignKey<VariableSymbolAllocator>(a => a.BankConnectionId)
+            .HasForeignKey<VariableSymbolAllocator>(a => a.BankAccountId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

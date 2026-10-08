@@ -29,7 +29,7 @@ public sealed record CommandOutcome(int Status, string Body, bool Replayed);
 /// <summary>
 /// Runs manual matching and review commands exactly once per owner and <c>Idempotency-Key</c>.
 /// The change, its receipt, and the response body are committed in one transaction under the
-/// connection lock. A retry with the same input returns the stored response even if the records
+/// account lock. A retry with the same input returns the stored response even if the records
 /// changed since; the same key with different input conflicts. A failed command stores nothing,
 /// so its key can be used again.
 /// </summary>
@@ -49,7 +49,7 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
 
     /// <summary>
     /// Executes <paramref name="body"/> for <paramref name="ownerId"/> under the lock of
-    /// <paramref name="lockId"/> (a bank connection, or the subscriber for webhook commands), or
+    /// <paramref name="lockId"/> (a bank account, or the subscriber for webhook commands), or
     /// returns the stored outcome of the same command.
     /// <paramref name="body"/> changes tracked entities; it must not commit.
     /// </summary>
@@ -63,7 +63,7 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
 
         db.ChangeTracker.Clear();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        await ledger.LockConnectionAsync(lockId, ct);
+        await ledger.LockAccountAsync(lockId, ct);
         try
         {
             var result = await body();
@@ -96,7 +96,7 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
         catch (DbUpdateException ex) when (ex is DbUpdateConcurrencyException
             || TenantService.IsUniqueViolation(ex, PaymentChangeConfiguration.SequenceUniqueIndex))
         {
-            // A request edit or cancellation, which does not take the connection lock, won.
+            // A request edit or cancellation, which does not take the account lock, won.
             await transaction.RollbackAsync(ct);
             db.ChangeTracker.Clear();
             return ServiceError.PreconditionFailed("A record changed while the command ran; reload and try again.");

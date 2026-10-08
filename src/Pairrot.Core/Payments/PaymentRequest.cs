@@ -11,6 +11,9 @@ public class PaymentRequest
     public Guid TenantId { get; set; }
     public Guid BankConnectionId { get; set; }
 
+    /// <summary>The physical account of the bank connection (Feature 013).</summary>
+    public Guid BankAccountId { get; set; }
+
     /// <summary>The caller's reference (e.g. a NaLekci reservation), unique within the tenant.</summary>
     public required string ExternalId { get; set; }
 
@@ -28,7 +31,7 @@ public class PaymentRequest
     /// <summary>The symbol as supplied, leading zeros kept; used for display and in the payload.</summary>
     public required string VariableSymbol { get; set; }
 
-    /// <summary>The symbol without leading zeros; unique per bank connection. See <see cref="PaymentRequestRules.VariableSymbolKey"/>.</summary>
+    /// <summary>The symbol without leading zeros; unique per bank account (Feature 013). See <see cref="PaymentRequestRules.VariableSymbolKey"/>.</summary>
     public required string VariableSymbolKey { get; set; }
 
     /// <summary>

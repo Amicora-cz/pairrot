@@ -1,5 +1,7 @@
 # Feature 009: payment matching and manual review
 
+Changed by [Feature 013](./013-bank-account-identity-and-reuse.md) (implemented): matching, candidates, and allocations use the same tenant and the same physical account, any of its registrations, and a cross-tenant movement conflict is decided by an operator.
+
 ## Goal and scope
 
 Connect [expected payments from Feature 005](./005-expected-payments.md) to incoming transactions from [Feature 007](./007-bank-message-parsing.md), including notifications accepted through [Feature 008](./008-forwarded-bank-notifications.md). Calculate how much has been paid for each request and let an authorized user resolve payments that cannot be matched automatically.

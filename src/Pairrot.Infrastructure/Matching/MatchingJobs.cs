@@ -17,7 +17,7 @@ using Pairrot.Infrastructure.Transactions;
 namespace Pairrot.Infrastructure.Matching;
 
 /// <summary>
-/// Automatic matching of one transaction, inside the caller's transaction and connection lock.
+/// Automatic matching of one transaction, inside the caller's transaction and account lock.
 /// Rechecks every rule on fresh data; a candidate seen earlier is never a reservation.
 /// </summary>
 public class PaymentMatcher(PairrotDbContext db, PaymentLedger ledger)
@@ -41,7 +41,7 @@ public class PaymentMatcher(PairrotDbContext db, PaymentLedger ledger)
 
         var requests = transaction.VariableSymbolKey is { } key
             ? await db.PaymentRequests
-                .Where(r => r.TenantId == transaction.TenantId && r.BankConnectionId == transaction.BankConnectionId && r.VariableSymbolKey == key)
+                .Where(r => r.TenantId == transaction.TenantId && r.BankAccountId == transaction.BankAccountId && r.VariableSymbolKey == key)
                 .ToListAsync(ct)
             : [];
         var result = MatchingRules.Decide(transaction, requests);
@@ -78,17 +78,17 @@ public class MatchTransactionJob(
 
     public async Task HandleAsync(JobLease lease, CancellationToken ct)
     {
-        var connectionId = await db.IncomingTransactions.AsNoTracking()
-            .Where(t => t.Id == lease.TargetId).Select(t => (Guid?)t.BankConnectionId).SingleOrDefaultAsync(ct);
+        var accountId = await db.IncomingTransactions.AsNoTracking()
+            .Where(t => t.Id == lease.TargetId).Select(t => (Guid?)t.BankAccountId).SingleOrDefaultAsync(ct);
         await MatchingJobs.RunAsync(jobs, logger, lease, async job =>
         {
-            if (connectionId is not { } connection)
+            if (accountId is not { } account)
             {
                 jobs.Fail(job, "transaction_not_found", "The transaction does not exist.");
                 return;
             }
 
-            await ledger.LockConnectionAsync(connection, ct);
+            await ledger.LockAccountAsync(account, ct);
             var transaction = await db.IncomingTransactions.SingleAsync(t => t.Id == lease.TargetId, ct);
             await matcher.TryMatchAsync(transaction, ct);
             jobs.Succeed(job);
@@ -98,7 +98,7 @@ public class MatchTransactionJob(
 
 /// <summary>
 /// A new request may be paid by a receipt that arrived before it: matches the waiting
-/// transactions of its connection with the same symbol key, oldest first.
+/// transactions of its tenant and account (any registration) with the same symbol key, oldest first.
 /// </summary>
 public class MatchPaymentRequestJob(
     PairrotDbContext db, BackgroundJobQueue jobs, PaymentLedger ledger, PaymentMatcher matcher, ILogger<MatchPaymentRequestJob> logger)
@@ -114,7 +114,7 @@ public class MatchPaymentRequestJob(
     {
         var target = await db.PaymentRequests.AsNoTracking()
             .Where(r => r.Id == lease.TargetId)
-            .Select(r => new { r.TenantId, r.BankConnectionId, r.VariableSymbolKey })
+            .Select(r => new { r.TenantId, r.BankAccountId, r.VariableSymbolKey })
             .SingleOrDefaultAsync(ct);
         await MatchingJobs.RunAsync(jobs, logger, lease, async job =>
         {
@@ -124,9 +124,9 @@ public class MatchPaymentRequestJob(
                 return;
             }
 
-            await ledger.LockConnectionAsync(target.BankConnectionId, ct);
+            await ledger.LockAccountAsync(target.BankAccountId, ct);
             var waiting = await db.IncomingTransactions
-                .Where(t => t.TenantId == target.TenantId && t.BankConnectionId == target.BankConnectionId
+                .Where(t => t.TenantId == target.TenantId && t.BankAccountId == target.BankAccountId
                     && t.VariableSymbolKey == target.VariableSymbolKey && t.Handling == TransactionHandling.Unallocated
                     && !t.AutoMatchBlocked && !t.ManuallyConfirmed && t.IngestionStatus == IngestionStatus.Accepted)
                 .OrderBy(t => t.Id)
@@ -251,7 +251,7 @@ public class MatchingScheduling(PairrotDbContext db, BackgroundJobQueue jobs, Pa
         {
             var query = db.IncomingTransactions.AsNoTracking().Where(t =>
                 t.Handling == TransactionHandling.Unallocated && !t.AutoMatchBlocked && !t.ManuallyConfirmed
-                && t.IngestionStatus == IngestionStatus.Accepted
+                && t.IngestionStatus == IngestionStatus.Accepted && !t.MovementConflict
                 && !db.BackgroundJobs.Any(j => j.Type == BackgroundJobTypes.MatchTransaction && j.TargetId == t.Id));
             if (after is { } cursor)
             {
@@ -277,31 +277,32 @@ public class MatchingScheduling(PairrotDbContext db, BackgroundJobQueue jobs, Pa
     /// <summary>
     /// Review cases for transactions under review or disputed that belong to no case, and for
     /// messages whose latest run is an unaccepted candidate without a case (data from before
-    /// Feature 009). Each connection is handled under its lock, so parsing cannot interleave.
+    /// Feature 009). Each account is handled under its lock, so parsing cannot interleave.
     /// </summary>
     public async Task<int> RecordMissingCasesAsync(CancellationToken ct = default)
     {
         var recorded = 0;
-        var connections = await db.IncomingTransactions.AsNoTracking()
+        var accounts = await db.IncomingTransactions.AsNoTracking()
             .Where(t => t.IngestionStatus != IngestionStatus.Accepted && !t.ManuallyConfirmed
                 && t.Handling != TransactionHandling.Rejected && t.Handling != TransactionHandling.Duplicate
                 && !db.ReviewCaseMembers.Any(m => m.TransactionId == t.Id))
-            .Select(t => t.BankConnectionId)
+            .Select(t => t.BankAccountId)
             .Union(db.InboundMessages.AsNoTracking()
                 .Where(m => m.LatestParseOutcome == Core.Parsing.ParseOutcome.ReviewRequired && m.BankConnectionId != null
                     && !db.ReviewCases.Any(c => c.InboundMessageId == m.Id)
-                    && db.MessageParseRuns.Any(r => r.Id == m.LatestParseRunId && r.TransactionId == null && r.Candidate != null))
-                .Select(m => m.BankConnectionId!.Value))
+                    && db.MessageParseRuns.Any(r => r.Id == m.LatestParseRunId && r.TransactionId == null && r.Candidate != null
+                        && r.ReasonCode != Core.Parsing.ParseReasons.AccountMovementConflict))
+                .Join(db.BankConnections, m => m.BankConnectionId, b => (Guid?)b.Id, (m, b) => b.BankAccountId))
             .Distinct()
             .Take(Batch)
             .ToListAsync(ct);
 
-        foreach (var connectionId in connections)
+        foreach (var accountId in accounts)
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            await ledger.LockConnectionAsync(connectionId, ct);
-            recorded += await RecordConnectionCasesAsync(connectionId, ct);
+            await ledger.LockAccountAsync(accountId, ct);
+            recorded += await RecordAccountCasesAsync(accountId, ct);
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
@@ -310,20 +311,21 @@ public class MatchingScheduling(PairrotDbContext db, BackgroundJobQueue jobs, Pa
         return recorded;
     }
 
-    private async Task<int> RecordConnectionCasesAsync(Guid connectionId, CancellationToken ct)
+    private async Task<int> RecordAccountCasesAsync(Guid accountId, CancellationToken ct)
     {
         var recorded = 0;
         var uncovered = await db.IncomingTransactions
-            .Where(t => t.BankConnectionId == connectionId && t.IngestionStatus != IngestionStatus.Accepted && !t.ManuallyConfirmed
+            .Where(t => t.BankAccountId == accountId && t.IngestionStatus != IngestionStatus.Accepted && !t.ManuallyConfirmed
                 && t.Handling != TransactionHandling.Rejected && t.Handling != TransactionHandling.Duplicate
                 && !db.ReviewCaseMembers.Any(m => m.TransactionId == t.Id))
             .OrderBy(t => t.Id)
             .ToListAsync(ct);
 
-        foreach (var group in uncovered.Where(t => t.IngestionStatus == IngestionStatus.ReviewRequired).GroupBy(t => t.ComparisonFingerprint))
+        foreach (var group in uncovered.Where(t => t.IngestionStatus == IngestionStatus.ReviewRequired)
+                     .GroupBy(t => (t.TenantId, t.ComparisonFingerprint)))
         {
             var first = group.First();
-            var reviewCase = recorder.NewCase(first.TenantId, connectionId, ReviewIssue.PossibleDuplicate, null,
+            var reviewCase = recorder.NewCase(first.TenantId, first.BankConnectionId, accountId, ReviewIssue.PossibleDuplicate, null,
                 Core.Parsing.ParseReasons.PossibleDuplicate,
                 "Notifications with the same amount, date, and symbol may describe one payment or several.",
                 ReviewCaseRecorder.Key(Core.Parsing.ParseReasons.PossibleDuplicate, first.ComparisonFingerprint));
@@ -338,7 +340,7 @@ public class MatchingScheduling(PairrotDbContext db, BackgroundJobQueue jobs, Pa
 
         foreach (var t in uncovered.Where(t => t.IngestionStatus == IngestionStatus.Disputed))
         {
-            var reviewCase = recorder.NewCase(t.TenantId, connectionId, ReviewIssue.Disputed, null, "disputed",
+            var reviewCase = recorder.NewCase(t.TenantId, t.BankConnectionId, accountId, ReviewIssue.Disputed, null, "disputed",
                 "Later evidence contradicts this transaction.", ReviewCaseRecorder.Key("disputed", t.Id.ToString()));
             recorder.AddMember(reviewCase, t.Id, null);
             await ledger.LoseEligibilityAsync(t, ct);
@@ -346,15 +348,17 @@ public class MatchingScheduling(PairrotDbContext db, BackgroundJobQueue jobs, Pa
         }
 
         var messages = await db.InboundMessages.AsNoTracking()
-            .Where(m => m.BankConnectionId == connectionId && m.LatestParseOutcome == Core.Parsing.ParseOutcome.ReviewRequired
+            .Where(m => m.LatestParseOutcome == Core.Parsing.ParseOutcome.ReviewRequired
+                && db.BankConnections.Any(b => b.Id == m.BankConnectionId && b.BankAccountId == accountId)
                 && !db.ReviewCases.Any(c => c.InboundMessageId == m.Id))
-            .Join(db.MessageParseRuns.Where(r => r.TransactionId == null && r.Candidate != null),
-                m => m.LatestParseRunId, r => (Guid?)r.Id, (m, r) => new { m.Id, m.TenantId, Run = r })
+            .Join(db.MessageParseRuns.Where(r => r.TransactionId == null && r.Candidate != null
+                    && r.ReasonCode != Core.Parsing.ParseReasons.AccountMovementConflict),
+                m => m.LatestParseRunId, r => (Guid?)r.Id, (m, r) => new { m.Id, m.TenantId, m.BankConnectionId, Run = r })
             .ToListAsync(ct);
         foreach (var message in messages)
         {
             var candidate = System.Text.Json.JsonSerializer.Deserialize<Core.Parsing.TransferCandidate>(message.Run.Candidate!, MessageParseJob.Json)!;
-            await recorder.OnUnverifiedCandidateAsync(message.Id, message.TenantId!.Value, connectionId, message.Run, candidate, ct);
+            await recorder.OnUnverifiedCandidateAsync(message.Id, message.TenantId!.Value, message.BankConnectionId!.Value, message.Run, candidate, ct);
             recorded++;
         }
 

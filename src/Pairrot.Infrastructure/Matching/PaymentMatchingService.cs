@@ -28,7 +28,7 @@ public sealed record MatchingCandidate(PaymentRequest Request, IReadOnlyList<str
 
 public sealed record CandidateList(TransactionView Transaction, IReadOnlyList<MatchingCandidate> Candidates);
 
-/// <summary>Manual search within the transaction's owner, account, and currency; all given values must match.</summary>
+/// <summary>Manual search within the transaction's owner, account (any registration), and currency; all given values must match.</summary>
 public sealed record CandidateSearch(string? ExternalId = null, string? VariableSymbol = null, long? Amount = null)
 {
     public bool IsEmpty => ExternalId is null && VariableSymbol is null && Amount is null;
@@ -44,7 +44,7 @@ public sealed record HandlingInput(int? Version, string? Reason);
 /// Manual matching for one owner (the caller's tenant or a direct child): candidates, allocation,
 /// revocation, ignoring, restoring, enabling automatic matching, and the request's allocation and
 /// change history. Writes are idempotent commands (<see cref="ManualCommands"/>) that recheck
-/// every rule under the connection lock and require the versions the caller saw.
+/// every rule under the account lock and require the versions the caller saw.
 /// </summary>
 public class PaymentMatchingService(
     PairrotDbContext db, TenantService tenants, PaymentLedger ledger, ManualCommands commands, BackgroundJobQueue jobs)
@@ -93,7 +93,7 @@ public class PaymentMatchingService(
 
         var view = await ViewAsync(transaction, ct);
         var scope = db.PaymentRequests.AsNoTracking().Where(r =>
-            r.TenantId == owner.Id && r.BankConnectionId == transaction.BankConnectionId && r.Currency == transaction.Currency);
+            r.TenantId == owner.Id && r.BankAccountId == transaction.BankAccountId && r.Currency == transaction.Currency);
 
         List<PaymentRequest> found;
         if (search.IsEmpty)
@@ -174,7 +174,7 @@ public class PaymentMatchingService(
             return ServiceError.PreconditionRequired("Send expected_transaction_version and expected_request_version as shown to you.");
         }
 
-        return await commands.RunAsync(owner.Id, found.BankConnectionId, command, async () =>
+        return await commands.RunAsync(owner.Id, found.BankAccountId, command, async () =>
         {
             var transaction = await db.IncomingTransactions.SingleAsync(t => t.Id == found.Id, ct);
             var request = await db.PaymentRequests.SingleOrDefaultAsync(r => r.Id == input.PaymentRequestId && r.TenantId == owner.Id, ct);
@@ -183,7 +183,8 @@ public class PaymentMatchingService(
                 return ServiceError.NotFound("The payment request was not found.");
             }
 
-            if (request.BankConnectionId != transaction.BankConnectionId)
+            // Another registration of the same account is fine (Feature 013); another account is not.
+            if (request.BankAccountId != transaction.BankAccountId)
             {
                 return ServiceError.Conflict("bank_connection_mismatch", "The payment request belongs to a different bank account than the transaction.");
             }
@@ -253,7 +254,7 @@ public class PaymentMatchingService(
                 "Send expected_allocation_version, expected_transaction_version, and expected_request_version as shown to you.");
         }
 
-        return await commands.RunAsync(owner.Id, found.BankConnectionId, command, async () =>
+        return await commands.RunAsync(owner.Id, found.BankAccountId, command, async () =>
         {
             var allocation = await db.PaymentAllocations.SingleAsync(a => a.Id == found.Id, ct);
             var transaction = await db.IncomingTransactions.SingleAsync(t => t.Id == allocation.TransactionId, ct);
@@ -416,7 +417,7 @@ public class PaymentMatchingService(
             return ServiceError.PreconditionRequired("Send expected_version: the transaction's version as shown to you.");
         }
 
-        return await commands.RunAsync(owner.Id, found.BankConnectionId, command, async () =>
+        return await commands.RunAsync(owner.Id, found.BankAccountId, command, async () =>
         {
             var transaction = await db.IncomingTransactions.SingleAsync(t => t.Id == found.Id, ct);
             if (await ledger.LifecycleBlockAsync(owner.Id, transaction.BankConnectionId, ct) is { } lifecycle)
@@ -479,6 +480,8 @@ public class PaymentMatchingService(
         MatchResults.Rejected => ServiceError.Conflict("transaction_rejected", "A review rejected this transaction as a receipt."),
         MatchResults.Duplicate => ServiceError.Conflict("transaction_duplicate", "A review marked this transaction as a copy of another one."),
         MatchResults.NotLiveEvidence => ServiceError.Conflict("not_live_evidence", "Test and fixture transactions never pay requests."),
+        MatchResults.AccountMovementConflict => ServiceError.Conflict(MatchResults.AccountMovementConflict,
+            "An earlier registration of this bank account may have recorded this movement; an operator must confirm it before it can be allocated."),
         _ => ServiceError.Conflict("transaction_review_required",
             "The transaction needs review; resolve its review case before allocating it."),
     };

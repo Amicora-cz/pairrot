@@ -127,6 +127,11 @@ X-Pairrot-Tenant-Id: {{tenantId}}
 GET {{host}}/v1/subtenants/{{childId}}/bank-connections
 Authorization: Bearer {{managementKey}}
 
+### Restore an archived connection (Feature 13): 409 account_unavailable while another registration of the account is active.
+POST {{https}}/v1/tenant/bank-connections/{{connectionId}}/restore
+X-XSRF-TOKEN: {{antiforgeryToken}}
+X-Pairrot-Tenant-Id: {{tenantId}}
+
 ### Payment QR (Feature 4): JSON payment data and SPAYD payload; the same body at .../payment-qr.png returns the image.
 POST {{https}}/v1/tenant/bank-connections/{{connectionId}}/payment-qr
 X-XSRF-TOKEN: {{antiforgeryToken}}

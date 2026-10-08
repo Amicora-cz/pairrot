@@ -8,9 +8,11 @@ using Pairrot.Core.Transactions;
 namespace Pairrot.Infrastructure.Persistence;
 
 // Feature 007: parse runs, incoming transactions, and the messages supporting them. Every row
-// carries its tenant and connection, and every reference includes them, so no run, transaction,
-// or link can join records of different owners. References to inbound_messages, whose owner
-// columns are nullable, are composite foreign keys added in the migration's SQL.
+// carries its tenant, connection, and (Feature 013) account; the connection reference includes
+// all three. References between records include the tenant and the account, so no run,
+// transaction, or link can join records of different owners or accounts, while records of one
+// tenant may link across that account's registrations. References to inbound_messages, whose
+// owner columns are nullable, are composite foreign keys added in the migration's SQL.
 
 internal sealed class MessageParseRunConfiguration : IEntityTypeConfiguration<MessageParseRun>
 {
@@ -51,18 +53,21 @@ internal sealed class MessageParseRunConfiguration : IEntityTypeConfiguration<Me
 
         builder.HasOne<BankConnection>()
             .WithMany()
-            .HasForeignKey(r => new { r.TenantId, r.BankConnectionId })
-            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .HasForeignKey(r => new { r.TenantId, r.BankConnectionId, r.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
+        // The transaction may have been established through another registration of the account.
         builder.HasOne<IncomingTransaction>()
             .WithMany()
-            .HasForeignKey(r => new { r.TransactionId, r.TenantId, r.BankConnectionId })
-            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankConnectionId })
+            .HasForeignKey(r => new { r.TransactionId, r.TenantId, r.BankAccountId })
+            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
-        // Lets a source link reference its run together with the owner.
+        // Lets a source link reference its run together with the owner and receiving connection,
+        // and a review member together with the owner and account.
         builder.HasAlternateKey(r => new { r.Id, r.TenantId, r.BankConnectionId });
+        builder.HasAlternateKey(r => new { r.Id, r.TenantId, r.BankAccountId });
 
         builder.HasIndex(r => new { r.InboundMessageId, r.JobGeneration }).IsUnique().HasDatabaseName(GenerationUniqueIndex);
     }
@@ -70,7 +75,7 @@ internal sealed class MessageParseRunConfiguration : IEntityTypeConfiguration<Me
 
 internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguration<IncomingTransaction>
 {
-    public const string BankReferenceUniqueIndex = "incoming_transactions_bank_reference_unique";
+    public const string BankReferenceUniqueIndex = "incoming_transactions_account_bank_reference_unique";
 
     public void Configure(EntityTypeBuilder<IncomingTransaction> builder)
     {
@@ -125,28 +130,31 @@ internal sealed class IncomingTransactionConfiguration : IEntityTypeConfiguratio
 
         builder.HasOne<BankConnection>()
             .WithMany()
-            .HasForeignKey(t => new { t.TenantId, t.BankConnectionId })
-            .HasPrincipalKey(b => new { b.TenantId, b.Id })
+            .HasForeignKey(t => new { t.TenantId, t.BankConnectionId, t.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasAlternateKey(t => new { t.Id, t.TenantId, t.BankConnectionId });
+        builder.HasAlternateKey(t => new { t.Id, t.TenantId, t.BankAccountId });
 
-        // A duplicate points to a record of the same owner and account.
+        // A duplicate points to a record of the same owner and account, possibly of another of its connections.
         builder.HasOne<IncomingTransaction>()
             .WithMany()
-            .HasForeignKey(t => new { t.CanonicalTransactionId, t.TenantId, t.BankConnectionId })
-            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankConnectionId })
+            .HasForeignKey(t => new { t.CanonicalTransactionId, t.TenantId, t.BankAccountId })
+            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
-        // A proven bank reference identifies one movement per connection and profile.
-        builder.HasIndex(t => new { t.BankConnectionId, t.BankProfile, t.BankTransactionId })
+        // A proven bank reference identifies one movement per physical account and profile, across
+        // all tenants and states (Feature 013). Retained transactions hold the claim.
+        builder.HasIndex(t => new { t.BankAccountId, t.BankProfile, t.BankTransactionId })
             .IsUnique()
             .HasFilter("bank_transaction_id IS NOT NULL")
             .HasDatabaseName(BankReferenceUniqueIndex);
 
-        builder.HasIndex(t => new { t.BankConnectionId, t.ComparisonFingerprint }).HasDatabaseName("incoming_transactions_fingerprint_idx");
+        builder.HasIndex(t => new { t.BankAccountId, t.ComparisonFingerprint }).HasDatabaseName("incoming_transactions_account_fingerprint_idx");
         builder.HasIndex(t => new { t.TenantId, t.Id }).HasDatabaseName("incoming_transactions_tenant_idx");
-        builder.HasIndex(t => new { t.BankConnectionId, t.VariableSymbolKey })
+        builder.HasIndex(t => new { t.BankConnectionId, t.Id }).HasDatabaseName("incoming_transactions_connection_idx");
+        builder.HasIndex(t => new { t.BankAccountId, t.VariableSymbolKey })
             .HasFilter("handling = 'unallocated'")
             .HasDatabaseName("incoming_transactions_unallocated_symbol_idx");
     }
@@ -162,10 +170,17 @@ internal sealed class TransactionSourceConfiguration : IEntityTypeConfiguration<
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id).ValueGeneratedNever();
 
+        // The receiving connection may be another registration of the transaction's account.
         builder.HasOne<IncomingTransaction>()
             .WithMany()
-            .HasForeignKey(s => new { s.TransactionId, s.TenantId, s.BankConnectionId })
-            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankConnectionId })
+            .HasForeignKey(s => new { s.TransactionId, s.TenantId, s.BankAccountId })
+            .HasPrincipalKey(t => new { t.Id, t.TenantId, t.BankAccountId })
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<BankConnection>()
+            .WithMany()
+            .HasForeignKey(s => new { s.TenantId, s.BankConnectionId, s.BankAccountId })
+            .HasPrincipalKey(b => new { b.TenantId, b.Id, b.BankAccountId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<MessageParseRun>()

@@ -9,6 +9,7 @@ const ISSUE_LABELS: Record<ReviewIssue, string> = {
   unverified_candidate: 'payment from an unverified email',
   possible_duplicate: 'possible duplicate',
   disputed: 'disputed transaction',
+  account_movement_conflict: 'possibly recorded by an earlier registration of the account',
 }
 
 const DECISIONS: Record<ReviewDecision, { label: string; help: string }> = {
@@ -29,6 +30,9 @@ function decisionsFor(detail: ReviewCaseDetail): ReviewDecision[] {
       return count >= 2 ? ['confirm_distinct', 'mark_duplicate', 'reject'] : ['confirm_payment', 'reject']
     case 'disputed':
       return ['keep_existing', 'reject']
+    case 'account_movement_conflict':
+      // Decided by an operator only (Feature 13).
+      return []
   }
 }
 
@@ -281,7 +285,14 @@ function CaseDetail({ path, readOnly, onChanged }: { path: string; readOnly: boo
       {notice && <p className="notice">{notice}</p>}
       <ErrorText error={error} />
 
-      {!readOnly && c.state === 'open' && (
+      {c.issue === 'account_movement_conflict' && (
+        <p className="notice">
+          An earlier registration of this bank account, possibly by another owner, may already have recorded this movement. Its
+          records are not shown here. Pairrot operators decide the case; until then the notification is not counted as a payment.
+        </p>
+      )}
+
+      {!readOnly && c.state === 'open' && allowed.length > 0 && (
         <form
           onSubmit={(e) => {
             e.preventDefault()

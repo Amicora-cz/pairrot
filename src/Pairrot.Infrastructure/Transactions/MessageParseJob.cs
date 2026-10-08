@@ -21,8 +21,11 @@ namespace Pairrot.Infrastructure.Transactions;
 /// Parses one stored message with the installed profile of its connection's bank. The run, any
 /// new transaction or source link, review or dispute marks, the message projection, and the
 /// job's completion are saved in one transaction, only while the job's lease is held, and
-/// serialized per connection so concurrent messages cannot both create the same movement. No
-/// provider is called: parsing reads the saved snapshot only.
+/// serialized per physical bank account (Feature 013), so concurrent messages, also received
+/// through different registrations of the account, cannot both create the same movement. A lost
+/// race on the account-wide bank reference index rolls the whole attempt back and evaluates
+/// again, so the conflict is then recorded as a review. No provider is called: parsing reads the
+/// saved snapshot only.
 /// </summary>
 public class MessageParseJob(
     PairrotDbContext db,
@@ -95,14 +98,14 @@ public class MessageParseJob(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Parsing message {MessageId} failed.", message.Id);
-            await FailedAttemptAsync(lease, message, profile, started, $"Unexpected {ex.GetType().Name} while parsing the message.", ct);
+            await FailedAttemptAsync(lease, message, connection.BankAccountId, profile, started, $"Unexpected {ex.GetType().Name} while parsing the message.", ct);
             return;
         }
 
         await FinishAsync(lease, async job =>
         {
-            await LockConnectionAsync(connection.Id, ct);
-            var run = NewRun(message, lease, job, profile, started);
+            await PaymentLedger.LockAsync(db, connection.BankAccountId, ct);
+            var run = NewRun(message, connection.BankAccountId, lease, job, profile, started);
             ApplyEvaluation(run, evaluation);
             db.MessageParseRuns.Add(run);
             if (profile is not null)
@@ -136,7 +139,10 @@ public class MessageParseJob(
     /// messages to one movement; changed facts dispute instead of overwriting; similar movements
     /// without proof are flagged, never merged. Feature 009: every unresolved result gets a review
     /// case, a transaction that loses eligibility loses its allocation in this same transaction,
-    /// and a new accepted transaction is queued for matching.
+    /// and a new accepted transaction is queued for matching. Feature 013: references and
+    /// lookalikes are compared over the whole account. Within the tenant they link or review
+    /// across its registrations; another tenant's records are never changed, linked, or shown,
+    /// and the conflict is reviewed locally by an operator.
     /// </summary>
     private async Task RecordTransactionAsync(
         MessageParseRun run, ParseEvaluation evaluation, InboundMessage message, IBankProfile profile, CancellationToken ct)
@@ -193,7 +199,18 @@ public class MessageParseJob(
         if (candidate.BankReference is { } reference)
         {
             var known = await db.IncomingTransactions.SingleOrDefaultAsync(t =>
-                t.BankConnectionId == message.BankConnectionId && t.BankProfile == profile.Name && t.BankTransactionId == reference, ct);
+                t.BankAccountId == run.BankAccountId && t.BankProfile == profile.Name && t.BankTransactionId == reference, ct);
+            if (known is not null && known.TenantId != run.TenantId)
+            {
+                // An earlier registration of the account by another tenant owns the movement. No
+                // transaction, link, or change of its records; the review holds local evidence only.
+                Resolve(run, ParseOutcome.ReviewRequired, ParseReasons.AccountMovementConflict,
+                    "The bank reference is already recorded for this account by an earlier registration; no transaction was created.");
+                await reviews.OnAccountMovementConflictAsync(run, null, ParseReasons.BankReferenceConflict,
+                    ReviewCaseRecorder.ForeignReferenceMessage, candidate.CriticalFacts, ct);
+                return;
+            }
+
             if (known is not null)
             {
                 run.TransactionId = known.Id;
@@ -218,20 +235,24 @@ public class MessageParseJob(
         }
 
         var now = jobs.Now();
-        var fingerprint = BankMessageEvaluator.ComparisonFingerprint(profile.Name, message.BankConnectionId!.Value, candidate);
+        var fingerprint = BankMessageEvaluator.ComparisonFingerprint(profile.Name, run.BankAccountId, candidate);
 
         // Different proven references are different movements even with equal amounts and symbols.
-        var similar = (await db.IncomingTransactions
-                .Where(t => t.BankConnectionId == message.BankConnectionId && t.ComparisonFingerprint == fingerprint)
+        // Lookalikes are searched over the whole account; only the tenant's own join its review.
+        var lookalikes = (await db.IncomingTransactions
+                .Where(t => t.BankAccountId == run.BankAccountId && t.ComparisonFingerprint == fingerprint)
                 .ToListAsync(ct))
             .Where(t => t.BankTransactionId is null || candidate.BankReference is null)
             .ToList();
+        var similar = lookalikes.Where(t => t.TenantId == run.TenantId).ToList();
+        var foreign = lookalikes.Any(t => t.TenantId != run.TenantId);
 
         var transaction = new IncomingTransaction
         {
             Id = Guid.CreateVersion7(),
             TenantId = message.TenantId!.Value,
-            BankConnectionId = message.BankConnectionId.Value,
+            BankConnectionId = message.BankConnectionId!.Value,
+            BankAccountId = run.BankAccountId,
             Amount = candidate.Amount!.Value,
             Currency = candidate.Currency!,
             VariableSymbol = candidate.VariableSymbol,
@@ -259,6 +280,20 @@ public class MessageParseJob(
         run.TransactionId = transaction.Id;
         await reviews.SupersedeCandidateAsync(message.Id, ct);
 
+        if (foreign)
+        {
+            // Another tenant's registration recorded a lookalike: this record stays unallocatable
+            // until an operator confirms it is distinct. The other record is not touched or shown.
+            transaction.IngestionStatus = IngestionStatus.ReviewRequired;
+            transaction.MovementConflict = true;
+            transaction.AutoMatchBlocked = true;
+            transaction.AutoMatchBlockReason = Core.Matching.MatchResults.AccountMovementConflict;
+            AppendReason(transaction, run, ParseReasons.AccountMovementConflict, ReviewCaseRecorder.ForeignLookalikeMessage);
+            Resolve(run, ParseOutcome.Parsed, ParseReasons.AccountMovementConflict, $"Recorded for operator review. {ReviewCaseRecorder.ForeignLookalikeMessage}");
+            await reviews.OnAccountMovementConflictAsync(run, transaction, ParseReasons.PossibleDuplicate,
+                ReviewCaseRecorder.ForeignLookalikeMessage, fingerprint, ct);
+        }
+
         if (similar.Count > 0)
         {
             var hint = $"It resembles {similar.Count} other transaction(s) with the same amount, date, and symbol; it may be the same movement.";
@@ -271,13 +306,14 @@ public class MessageParseJob(
             Resolve(run, ParseOutcome.Parsed, ParseReasons.PossibleDuplicate, $"Recorded for review. {hint}");
             await reviews.OnPossibleDuplicateAsync(transaction, similar, run, ct);
         }
-        else
+        else if (!foreign)
         {
             // Saved with the transaction, so a recorded receipt is always matched eventually.
             jobs.Add(BackgroundJobTypes.MatchTransaction, transaction.Id, 1, BackgroundJobQueue.SystemRequester);
         }
     }
 
+    /// <summary>Links the message to the transaction; the link keeps the receiving connection, which may be another registration of the account.</summary>
     private void AddSource(IncomingTransaction transaction, InboundMessage message, MessageParseRun run) =>
         db.TransactionSources.Add(new TransactionSource
         {
@@ -286,7 +322,8 @@ public class MessageParseJob(
             InboundMessageId = message.Id,
             ParseRunId = run.Id,
             TenantId = transaction.TenantId,
-            BankConnectionId = transaction.BankConnectionId,
+            BankConnectionId = run.BankConnectionId,
+            BankAccountId = run.BankAccountId,
             CreatedAt = jobs.Now(),
         });
 
@@ -318,12 +355,14 @@ public class MessageParseJob(
     private static string Facts(IncomingTransaction t) =>
         TransferCandidate.Facts(t.Amount, t.Currency, t.VariableSymbol, t.BookedOn, t.BankTransactionId);
 
-    private MessageParseRun NewRun(InboundMessage message, JobLease lease, BackgroundJob job, IBankProfile? profile, DateTimeOffset started) => new()
+    private MessageParseRun NewRun(
+        InboundMessage message, Guid accountId, JobLease lease, BackgroundJob job, IBankProfile? profile, DateTimeOffset started) => new()
     {
         Id = Guid.CreateVersion7(),
         InboundMessageId = message.Id,
         TenantId = message.TenantId!.Value,
         BankConnectionId = message.BankConnectionId!.Value,
+        BankAccountId = accountId,
         JobGeneration = lease.Generation,
         SourceSha256 = message.ContentSha256!,
         BankProfile = profile?.Name,
@@ -375,7 +414,7 @@ public class MessageParseJob(
 
     /// <summary>Retries an unexpected failure; the last attempt records a <c>failed</c> run.</summary>
     private Task FailedAttemptAsync(
-        JobLease lease, InboundMessage message, IBankProfile? profile, DateTimeOffset started, string error, CancellationToken ct)
+        JobLease lease, InboundMessage message, Guid accountId, IBankProfile? profile, DateTimeOffset started, string error, CancellationToken ct)
     {
         if (jobs.Schedule.NextAttempt(lease.AttemptCount, jobs.Now()) is { } next)
         {
@@ -384,7 +423,7 @@ public class MessageParseJob(
 
         return FinishAsync(lease, async job =>
         {
-            var run = NewRun(message, lease, job, profile, started);
+            var run = NewRun(message, accountId, lease, job, profile, started);
             SetResult(run, ParseOutcome.Failed, ParseReasons.ProcessingFailed, $"{error} No attempts left.");
             run.Reasons = JsonSerializer.Serialize(new[] { new ParseReason(run.ReasonCode, run.ReasonMessage) }, Json);
             db.MessageParseRuns.Add(run);
@@ -392,9 +431,6 @@ public class MessageParseJob(
             jobs.Fail(job, ParseReasons.ProcessingFailed, error);
         }, ct);
     }
-
-    private Task LockConnectionAsync(Guid connectionId, CancellationToken ct) =>
-        db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock(hashtextextended({connectionId.ToString()}, 7007))", ct);
 
     private Task FinishAsync(JobLease lease, Action<BackgroundJob> apply, CancellationToken ct) =>
         FinishAsync(lease, job =>

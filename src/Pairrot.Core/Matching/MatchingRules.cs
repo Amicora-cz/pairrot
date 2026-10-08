@@ -24,6 +24,9 @@ public static class MatchResults
     public const string ManualAllocationOnly = "manual_allocation_only";
 
     public const string AutoMatchingBlocked = "auto_matching_blocked";
+
+    /// <summary>Feature 013: another tenant's registration of the account recorded a similar movement; an operator decides.</summary>
+    public const string AccountMovementConflict = "account_movement_conflict";
     public const string NotLiveEvidence = "not_live_evidence";
     public const string TenantNotActive = "tenant_not_active";
     public const string BankConnectionArchived = "bank_connection_archived";
@@ -51,7 +54,8 @@ public static class RevocationCodes
 
 /// <summary>
 /// Feature 009's matching rules, free of persistence. Automatic matching is exact: one open
-/// request with the same connection, currency, variable symbol key, and full amount. Nothing is
+/// request of the same tenant and bank account (any of its registrations, Feature 013), with the
+/// same currency, variable symbol key, and full amount. Nothing is
 /// inferred from names, messages, similar amounts, or scores.
 /// </summary>
 public static class MatchingRules
@@ -72,6 +76,7 @@ public static class MatchingRules
         { Handling: TransactionHandling.Ignored } => MatchResults.Ignored,
         { Handling: TransactionHandling.Rejected } => MatchResults.Rejected,
         { Handling: TransactionHandling.Duplicate } => MatchResults.Duplicate,
+        { MovementConflict: true } => MatchResults.AccountMovementConflict,
         _ when inOpenReviewCase => MatchResults.ReviewRequired,
         { IngestionStatus: not IngestionStatus.Accepted, ManuallyConfirmed: false } => MatchResults.ReviewRequired,
         _ when !allowTestEvidence && !IsLive(t) => MatchResults.NotLiveEvidence,
@@ -87,8 +92,8 @@ public static class MatchingRules
         };
 
     /// <summary>
-    /// The automatic decision for an eligible transaction among the requests of its connection
-    /// with the same symbol key (normally zero or one).
+    /// The automatic decision for an eligible transaction among the requests of its tenant and
+    /// account with the same symbol key (normally zero or one).
     /// </summary>
     public static string Decide(IncomingTransaction t, IReadOnlyList<PaymentRequest> sameSymbol)
     {
@@ -98,7 +103,7 @@ public static class MatchingRules
         }
 
         var candidates = sameSymbol
-            .Where(r => r.TenantId == t.TenantId && r.BankConnectionId == t.BankConnectionId && r.VariableSymbolKey == t.VariableSymbolKey)
+            .Where(r => r.TenantId == t.TenantId && r.BankAccountId == t.BankAccountId && r.VariableSymbolKey == t.VariableSymbolKey)
             .ToList();
         return candidates switch
         {

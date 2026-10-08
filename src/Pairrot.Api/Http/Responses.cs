@@ -121,9 +121,12 @@ public sealed record AuditEventResponse(
 /// </param>
 /// <param name="InboundAddress">Shown only once the address is usable.</param>
 /// <param name="AddressReplaced">Address assignment only: <c>true</c> when a test address was retired for a new live one.</param>
+/// <param name="BankAccountId">The physical account (Feature 013): the same for every registration of it.</param>
+/// <param name="ArchivedReason"><c>user</c>, <c>tenant_deleted</c>, or <c>operator</c>; <c>null</c> while active.</param>
 public sealed record BankConnectionResponse(
     Guid Id,
     Guid TenantId,
+    Guid BankAccountId,
     string? Label,
     string AccountNumber,
     string Iban,
@@ -139,6 +142,7 @@ public sealed record BankConnectionResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? ArchivedAt,
+    string? ArchivedReason,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AddressReplaced = null)
 {
     public static BankConnectionResponse From(BankConnectionView view, string providerName)
@@ -148,6 +152,7 @@ public sealed record BankConnectionResponse(
         return new BankConnectionResponse(
             c.Id,
             c.TenantId,
+            c.BankAccountId,
             c.Label,
             c.AccountNumber,
             c.Iban,
@@ -170,6 +175,7 @@ public sealed record BankConnectionResponse(
             c.CreatedAt,
             c.UpdatedAt,
             c.ArchivedAt,
+            c.ArchivedReason is { } reason ? InboundMessageResponse.Snake(reason) : null,
             view.ReplacedStub);
     }
 }
@@ -366,6 +372,7 @@ public sealed record PaymentRequestResponse(
     Guid Id,
     Guid TenantId,
     Guid BankConnectionId,
+    Guid BankAccountId,
     string ExternalId,
     string AccountNumber,
     string Iban,
@@ -396,6 +403,7 @@ public sealed record PaymentRequestResponse(
         p.Id,
         p.TenantId,
         p.BankConnectionId,
+        p.BankAccountId,
         p.ExternalId,
         p.AccountNumber,
         p.Iban,

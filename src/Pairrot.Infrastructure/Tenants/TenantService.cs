@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Pairrot.Core.ApiKeys;
+using Pairrot.Core.Banking;
 using Pairrot.Core.Tenants;
 using Pairrot.Infrastructure.Persistence;
 
@@ -173,7 +174,26 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
         child.Status = TenantStatus.Deleted;
         child.DeletedAt = now;
         child.UpdatedAt = now;
-        AddAudit(actor, child.Id, AuditActions.TenantDeleted, new { From = Lower(previousStatus), RevokedKeyCount = revoked });
+
+        // Feature 013: deletion releases the tenant's accounts, so a new registration may use them.
+        var released = await db.BankConnections
+            .Where(b => b.TenantId == child.Id && b.Status == BankConnectionStatus.Active)
+            .ToListAsync(ct);
+        foreach (var connection in released)
+        {
+            connection.Status = BankConnectionStatus.Archived;
+            connection.ArchivedAt = now;
+            connection.ArchivedReason = BankConnectionArchivedReason.TenantDeleted;
+            connection.UpdatedAt = now;
+            AddAudit(actor, child.Id, AuditActions.BankConnectionArchived, new { ConnectionId = connection.Id, Reason = "tenant_deleted" });
+        }
+
+        AddAudit(actor, child.Id, AuditActions.TenantDeleted, new
+        {
+            From = Lower(previousStatus),
+            RevokedKeyCount = revoked,
+            ArchivedBankConnectionCount = released.Count,
+        });
 
         return await SaveAsync(true, ct);
     }
