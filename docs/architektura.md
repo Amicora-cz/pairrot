@@ -20,6 +20,17 @@ Další navržené kroky:
 - [Feature 010](./features/010-payment-status-webhooks.md): podepsané webhooky se změnami úhrady do NaLekci, signing secrets, odběr událostí přímých subtenantů, historie doručení a ruční opakování.
 - [Feature 011](./features/011-webhook-delivery-retries.md): tři automatická opakování neúspěšného webhooku po 5 sekundách, 60 sekundách a 1 hodině; nejvýše čtyři pokusy včetně prvního, uložené v databázi.
 
+Navržené další kroky (zadání existují, implementace ne; vzešly z integračního briefu NaLekci z 8. 10. 2026):
+
+- [Feature 013](./features/013-bank-account-identity-and-reuse.md): fyzický bankovní účet jako samostatná identita; výlučnost jen mezi aktivními registracemi, uvolnění účtu při archivaci a smazání tenanta, VS a identita transakcí per účet, obnovení archivovaného spojení. Řeší dnešní „jeden IBAN navždy“.
+- [Feature 014](./features/014-subtenant-erasure-and-payer-data-retention.md): výmaz osobních údajů smazaného subtenanta při zachování částek, symbolů a historie; retenční limit pro údaje plátců u všech tenantů.
+- [Feature 015](./features/015-supported-banks-and-reception-readiness.md): katalog podporovaných bank (`GET /v1/banks`) a odvozená připravenost spojení s důvody, proč platby ještě nebudou rozpoznány.
+- [Feature 016](./features/016-attention-events-and-parent-attention-list.md): webhooky pro nespárované transakce, review cases, pozastavené adresy a změny příjmu; seznam „co čeká na člověka“ napříč subtenanty pro nadřazeného tenanta.
+- [Feature 017](./features/017-webhook-retry-budget-and-endpoint-recovery.md): delší rozpočet opakování (dny místo hodiny), detekce nedostupného endpointu bez spotřeby pokusů a automatické obnovení neúspěšných doručení.
+- [Feature 018](./features/018-acting-user-attribution.md): hlavička, kterou volající s API klíčem uvede uživatele, za nějž jedná; zapisuje se do auditu, alokací a rozhodnutí.
+- [Feature 019](./features/019-operational-health-and-alerting.md): readiness, heartbeaty workerů, operátorský stav, alerty s konfigurovatelným cílem, korelace požadavků, volitelný Sentry.
+- [Feature 020](./features/020-forwarding-source-verification.md): ověření přeposílající schránky (důkaz příchozím e-mailem nebo kódem) a vzorky přeposílání ze Seznamu.
+
 Pro 005–011 zůstává lokální PostgreSQL v Dockeru a lokální SPA. Feature 006 přidává skutečný Resend jako volitelně zapnutý režim vedle stubu; živé ověření potřebuje nastavenou příjmovou doménu a dostupný HTTPS webhook. Features 010 a 011 lze lokálně ověřit proti testovacímu příjemci bez Resendu.
 
 ## Základní uspořádání
