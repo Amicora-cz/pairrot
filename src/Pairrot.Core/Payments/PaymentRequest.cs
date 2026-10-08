@@ -59,7 +59,8 @@ public class PaymentRequest
     /// <summary>SHA-256 of the original validated creation input; compared on creation retries, never updated.</summary>
     public required string CreationFingerprint { get; set; }
 
-    public required string QrPayload { get; set; }
+    /// <summary>The issued SPAYD payload; <c>null</c> once erased (Feature 014): it names the account and the message.</summary>
+    public string? QrPayload { get; set; }
     public required string QrFormat { get; set; }
     public required string QrGeneratorVersion { get; set; }
 
@@ -69,6 +70,12 @@ public class PaymentRequest
 
     /// <summary>Starts at 1 and is incremented on every change; exposed as the ETag.</summary>
     public int Version { get; set; } = 1;
+
+    /// <summary>
+    /// Feature 014: caller references and free text were erased with the tenant (the external ID is
+    /// a tombstone, the account snapshots are masked, the QR payload is gone); the financial facts remain.
+    /// </summary>
+    public DateTimeOffset? ErasedAt { get; set; }
 }
 
 /// <summary>How a request's variable symbol was chosen; requests created before Feature 012 are <see cref="Supplied"/>.</summary>

@@ -166,6 +166,12 @@ public enum InboundContentState
 
     /// <summary>Deliberately not retrieved or stored: foreign mail or a paused address (Feature 008).</summary>
     Skipped,
+
+    /// <summary>Feature 014: purged by the payer-data retention limit. Terminal; never retrieved again.</summary>
+    Expired,
+
+    /// <summary>Feature 014: purged with its erased tenant. Terminal and takes precedence over <see cref="Expired"/>.</summary>
+    Erased,
 }
 
 /// <summary>Feature 008 sender classes, from delivery metadata only.</summary>

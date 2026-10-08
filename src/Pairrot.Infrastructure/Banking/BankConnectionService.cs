@@ -182,7 +182,12 @@ public class BankConnectionService(
             return await ToViewAsync(connection, ct);
         }
 
-        if (owner!.Status != TenantStatus.Active)
+        if (connection.ErasedAt is not null || owner!.ErasureRequestedAt is not null)
+        {
+            return ServiceError.Conflict("bank_connection_erased", "The bank connection was erased with its tenant and cannot be restored.");
+        }
+
+        if (owner.Status != TenantStatus.Active)
         {
             return ServiceError.Conflict("tenant_not_active", "The tenant is suspended or deleted; its bank connections cannot be restored.");
         }
@@ -599,7 +604,7 @@ public class BankConnectionService(
 
         return owner.Status switch
         {
-            TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot receive payments."),
+            TenantStatus.Deleted => TenantService.TenantDeleted(owner, "The tenant is deleted and cannot receive payments."),
             TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended and cannot receive payments."),
             _ when connection.Status == BankConnectionStatus.Archived =>
                 Archived("An archived bank connection cannot be used for new payments."),
@@ -674,7 +679,7 @@ public class BankConnectionService(
     /// </summary>
     private static ServiceError? CheckChangeable(Tenant owner) => owner.Status switch
     {
-        TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot be changed."),
+        TenantStatus.Deleted => TenantService.TenantDeleted(owner),
         TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended; reactivate it before changing its bank settings."),
         _ => null,
     };

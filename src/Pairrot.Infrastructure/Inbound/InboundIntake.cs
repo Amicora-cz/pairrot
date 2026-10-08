@@ -3,8 +3,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Transactions;
@@ -52,6 +54,7 @@ public class InboundIntake(
     InboundRouter router,
     InboundProviderRegistry providers,
     SenderScreening screening,
+    IOptions<RetentionOptions> retention,
     ILogger<InboundIntake> logger) : IInboundEmailIntake
 {
     public const int MaxIdentityLength = 200;
@@ -106,6 +109,8 @@ public class InboundIntake(
 
     private async Task<IntakeResult> SaveAsync(InboundProviderInstance instance, InboundDelivery delivery, CancellationToken ct)
     {
+        // One transaction, so the owner's collection barrier (Feature 014) holds until the commit.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var digest = Digest(delivery);
         var existing = await db.InboundDeliveryReceipts.AsNoTracking()
             .Where(r => r.ProviderInstanceId == instance.Id && r.SourceDeliveryId == delivery.SourceDeliveryId)
@@ -138,13 +143,20 @@ public class InboundIntake(
             // Another delivery of the same email: one message, one content, at most one retrieval.
             receipt.Outcome = InboundReceiptOutcome.ExistingMessage;
             receipt.InboundMessageId = known.Id;
-            if (known.RoutingState == InboundRoutingState.MissingRecipientEvidence && recipients.Count > 0)
+            if (known.ContentState is InboundContentState.Erased or InboundContentState.Expired
+                || known.TenantId is { } knownOwner && await DataBarrier.IsClosedAsync(db, knownOwner, ct))
+            {
+                // Feature 014: a repeat for an erased owner or expired content is deduplicated by its digest only.
+                receipt.RawPayload = null;
+            }
+            else if (known.RoutingState == InboundRoutingState.MissingRecipientEvidence && recipients.Count > 0)
             {
                 // The first delivery had no recipient evidence; this one does, so the normal rules decide now.
                 await ResolveMissingEvidenceAsync(known, delivery, recipients, now, ct);
             }
 
             await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
             return new IntakeResult(IntakeStatus.Accepted, known.Id, known.RoutingState);
         }
 
@@ -184,11 +196,26 @@ public class InboundIntake(
         receipt.Outcome = InboundReceiptOutcome.MessageCreated;
         receipt.InboundMessageId = message.Id;
 
+        // Feature 014: mail for an erased owner, or older than the payer-data limit, is acknowledged
+        // and deduplicated, but nothing about its sender or content is kept or retrieved.
+        var gone = route.Address is { } owner && await DataBarrier.IsClosedAsync(db, owner.TenantId, ct) ? InboundContentState.Erased
+            : retention.Value.Enabled && message.ReceivedAt < retention.Value.CutoffAt(now) ? InboundContentState.Expired
+            : (InboundContentState?)null;
+        if (gone is { } state)
+        {
+            InboundContent.Minimize(message, state, route.Address?.Address, now);
+            receipt.RawPayload = null;
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return new IntakeResult(IntakeStatus.Accepted, message.Id, route.State, NewMessage: true);
+        }
+
         // Feature 008: foreign mail and mail to a paused address are neither stored nor retrieved.
         var collect = route.Address is not { } routed || await screening.ApplyAsync(message, routed, receipt, now, ct);
         if (!collect)
         {
             await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
             return new IntakeResult(IntakeStatus.Accepted, message.Id, route.State, NewMessage: true);
         }
 
@@ -218,6 +245,7 @@ public class InboundIntake(
         }
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return new IntakeResult(IntakeStatus.Accepted, message.Id, route.State, NewMessage: true);
     }
 
@@ -299,6 +327,31 @@ public static class InboundContent
         message.DmarcResult = AuthenticationResults.Normalize(authentication.Dmarc);
         message.AuthenticationOrigin = authentication.Origin;
         message.AuthenticationRaw = authentication.RawJson;
+    }
+
+    /// <summary>
+    /// Feature 014: keeps only tombstone metadata of a message whose owner is erased or whose payer
+    /// data expired: no sender, subject, content, or provider payload, and among the recipients only
+    /// the reserved Pairrot routing address. Codes, digests, and opaque provider IDs stay.
+    /// </summary>
+    public static void Minimize(InboundMessage message, InboundContentState state, string? routingAddress, DateTimeOffset now)
+    {
+        message.ContentState = state;
+        message.Subject = null;
+        message.HeaderFrom = null;
+        message.EnvelopeSender = null;
+        message.SenderDomain = null;
+        message.EnvelopeRecipients = routingAddress is { } address && message.EnvelopeRecipients.Contains(address) ? [address] : [];
+        message.ContentRecipients = null;
+        message.TextBody = null;
+        message.HtmlBody = null;
+        message.Headers = null;
+        message.Attachments = null;
+        message.RawProviderContent = null;
+        message.TransportMetadata = null;
+        message.AuthenticationRaw = null;
+        message.FetchErrorMessage = null;
+        message.UpdatedAt = now;
     }
 
     public static void RecordError(InboundMessage message, string code, string error, DateTimeOffset now)

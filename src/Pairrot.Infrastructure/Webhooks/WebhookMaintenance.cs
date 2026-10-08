@@ -76,22 +76,12 @@ public class WebhookMaintenance(PairrotDbContext db, BackgroundJobQueue jobs)
                 .OrderBy(c => c.Id)
                 .Take(Batch)
                 .ToListAsync(ct);
+            var owners = changes.Select(c => c.TenantId).Distinct().ToList();
+            var erased = await db.Tenants.AsNoTracking()
+                .Where(t => owners.Contains(t.Id) && t.ErasureRequestedAt != null).Select(t => t.Id).ToListAsync(ct);
             foreach (var change in changes)
             {
-                var body = WebhookEvents.PaymentBody(change);
-                db.WebhookEvents.Add(new WebhookEvent
-                {
-                    Id = change.Id,
-                    Type = WebhookEvents.PaymentRequestUpdated,
-                    TenantId = change.TenantId,
-                    PaymentChangeId = change.Id,
-                    PaymentRequestId = change.PaymentRequestId,
-                    Sequence = change.Sequence,
-                    Environment = WebhookEvents.EnvironmentOf(change),
-                    Body = body,
-                    BodySha256 = WebhookEvents.Sha256(body),
-                    CreatedAt = change.CreatedAt,
-                });
+                db.WebhookEvents.Add(WebhookEvents.ForChange(change, erased.Contains(change.TenantId)));
             }
 
             try

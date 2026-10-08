@@ -9,6 +9,7 @@ using Pairrot.Core.Jobs;
 using Pairrot.Core.Parsing;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Matching;
@@ -33,6 +34,7 @@ public class MessageParseJob(
     BankProfileRegistry profiles,
     IOptions<ForwardingOptions> forwarding,
     ReviewCaseRecorder reviews,
+    IOptions<RetentionOptions> retention,
     ILogger<MessageParseJob> logger) : IBackgroundJobHandler
 {
     private const int SaveAttempts = 3;
@@ -82,8 +84,8 @@ public class MessageParseJob(
         var profile = profiles.For(account);
 
         var sources = (await db.ForwardingSources.AsNoTracking()
-                .Where(s => s.BankConnectionId == connection.Id && s.State == ForwardingSourceState.Active)
-                .Select(s => s.Address)
+                .Where(s => s.BankConnectionId == connection.Id && s.State == ForwardingSourceState.Active && s.Address != null)
+                .Select(s => s.Address!)
                 .ToListAsync(ct))
             .ToHashSet();
         ParseEvaluation evaluation;
@@ -104,6 +106,11 @@ public class MessageParseJob(
 
         await FinishAsync(lease, async job =>
         {
+            if (await GoneAsync(message, job, ct))
+            {
+                return;
+            }
+
             await PaymentLedger.LockAsync(db, connection.BankAccountId, ct);
             var run = NewRun(message, connection.BankAccountId, lease, job, profile, started);
             ApplyEvaluation(run, evaluation);
@@ -423,6 +430,11 @@ public class MessageParseJob(
 
         return FinishAsync(lease, async job =>
         {
+            if (await GoneAsync(message, job, ct))
+            {
+                return;
+            }
+
             var run = NewRun(message, accountId, lease, job, profile, started);
             SetResult(run, ParseOutcome.Failed, ParseReasons.ProcessingFailed, $"{error} No attempts left.");
             run.Reasons = JsonSerializer.Serialize(new[] { new ParseReason(run.ReasonCode, run.ReasonMessage) }, Json);
@@ -430,6 +442,31 @@ public class MessageParseJob(
             await ProjectAsync(message.Id, run, ct);
             jobs.Fail(job, ParseReasons.ProcessingFailed, error);
         }, ct);
+    }
+
+    /// <summary>
+    /// Feature 014: rechecked in the job's transaction before a run is saved. The message row lock
+    /// orders this against a retention pass, the barrier lock against an erasure request; when the
+    /// content was purged or the owner erased meanwhile, the result is discarded, not rescheduled.
+    /// </summary>
+    private async Task<bool> GoneAsync(InboundMessage read, BackgroundJob job, CancellationToken ct)
+    {
+        var current = (await db.InboundMessages.FromSql($"SELECT *, xmin FROM inbound_messages WHERE id = {read.Id} FOR UPDATE")
+            .AsNoTracking().ToListAsync(ct)).Single();
+        var erased = current.ContentState == InboundContentState.Erased || await DataBarrier.IsClosedAsync(db, read.TenantId!.Value, ct);
+        var expired = !erased && (current.ContentState != InboundContentState.Available || current.ContentSha256 != read.ContentSha256
+            || retention.Value.Enabled && current.ReceivedAt < retention.Value.CutoffAt(jobs.Now()));
+        if (erased)
+        {
+            jobs.Fail(job, "content_erased", "The message's owner was erased; the result was discarded.");
+        }
+        else if (expired)
+        {
+            jobs.Fail(job, current.ContentState == InboundContentState.Available ? "content_changed" : "content_expired",
+                "The message's content is no longer the one parsed; the result was discarded.");
+        }
+
+        return erased || expired;
     }
 
     private Task FinishAsync(JobLease lease, Action<BackgroundJob> apply, CancellationToken ct) =>
@@ -480,9 +517,14 @@ public static class ParseEligibility
             return new Hold("message_not_routed", "The message has no owner.");
         }
 
-        if (message.ContentState != InboundContentState.Available)
+        switch (message.ContentState)
         {
-            return new Hold("content_not_available", "The source content has not been retrieved.");
+            case InboundContentState.Erased:
+                return new Hold("content_erased", "The message's content was erased with its tenant.");
+            case InboundContentState.Expired:
+                return new Hold("content_expired", "The message's content was purged by the payer-data retention limit.");
+            case not InboundContentState.Available:
+                return new Hold("content_not_available", "The source content has not been retrieved.");
         }
 
         if (message.HoldReason is { } reason)

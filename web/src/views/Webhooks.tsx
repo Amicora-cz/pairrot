@@ -243,7 +243,7 @@ function EndpointSettings({
   onChanged: (next: WebhookEndpoint) => void
   onSecret: (secret: { key_id: string; secret: string }) => void
 }) {
-  const [url, setUrl] = useState(e.url)
+  const [url, setUrl] = useState(e.url ?? '')
   const [grace, setGrace] = useState('86400')
   const [revokeRetiring, setRevokeRetiring] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -273,7 +273,8 @@ function EndpointSettings({
       <dl>
         <dt>Destination</dt>
         <dd>
-          <code>{e.url}</code> <span className="muted">revision {e.destination_revision}</span>
+          {e.url ? <code>{e.url}</code> : <span className="badge badge-deleted">erased</span>}{' '}
+          <span className="muted">revision {e.destination_revision}</span>
         </dd>
         <dt>Scope</dt>
         <dd>{e.scope === 'own' ? 'this tenant only' : 'this tenant and its direct subtenants'}</dd>
@@ -577,7 +578,7 @@ function DeliveryDetail({
         <dd>
           revision {d.destination_revision}
           {d.destination_revision !== endpoint.destination_revision && (
-            <span className="error"> (the endpoint is now at revision {endpoint.destination_revision}: {detail.current_url})</span>
+            <span className="error"> (the endpoint is now at revision {endpoint.destination_revision}: {detail.current_url ?? 'erased'})</span>
           )}
         </dd>
       </dl>
@@ -612,7 +613,7 @@ function DeliveryDetail({
               </td>
               <td>{a.duration_ms === null ? '—' : `${a.duration_ms} ms`}</td>
               <td>
-                r{a.destination_revision} <code>{a.url}</code>
+                r{a.destination_revision} {a.url ? <code>{a.url}</code> : <span className="muted">erased</span>}
               </td>
             </tr>
           ))}
@@ -624,7 +625,14 @@ function DeliveryDetail({
         <summary>
           Event {detail.event.type} {detail.event.sequence !== null && `· sequence ${detail.event.sequence}`}
         </summary>
-        <pre className="source">{JSON.stringify(detail.event.body, null, 2)}</pre>
+        {detail.event.payload_erased_at ? (
+          <p className="muted">
+            The payload was erased with its tenant on {formatDate(detail.event.payload_erased_at)}; it cannot be sent again. Digest{' '}
+            <code>{detail.event.body_sha256}</code>.
+          </p>
+        ) : (
+          <pre className="source">{JSON.stringify(detail.event.body, null, 2)}</pre>
+        )}
       </details>
 
       {manageable && (d.state === 'failed' || d.state === 'held' || d.state === 'pending' || d.state === 'retry_wait') && (

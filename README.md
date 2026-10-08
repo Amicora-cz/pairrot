@@ -21,9 +21,10 @@ Implemented so far:
 - **Feature 12: automatic variable symbol generation** ([spec](docs/features/012-automatic-variable-symbol-generation.md)): payment-request creation without `variable_symbol` gets the next unused symbol of its bank account, allocated under a per-account lock in PostgreSQL and replayed on retries; caller-supplied symbols work as before (see [below](#expected-payments))
 - **Feature 13: bank account identity, release, and reuse** ([spec](docs/features/013-bank-account-identity-and-reuse.md)): a physical account is its own record; only active registrations are exclusive, so archiving or deleting a tenant releases the account, and an archived connection can be restored. Variable symbols, bank references, and lookalike comparison are per account; a tenant's old requests stay payable through its new registration, and another tenant's history is never visible (see [below](#bank-connections))
 
+- **Feature 14: subtenant erasure and payer-data retention** ([spec](docs/features/014-subtenant-erasure-and-payer-data-retention.md)): `POST /v1/subtenants/{id}/erase` purges a deleted child's personal data in a background job (names, contacts, labels, mailboxes, stored e-mails, payer details, free text, caller references, webhook payloads) while amounts, symbols, statuses, allocations, and internal IDs stay; a permanent collection barrier keeps in-flight and later work from bringing anything back. Payer data of every tenant is purged two years after reception (see [below](#erasure-and-retention))
+
 Proposed, not implemented (specs only, written against NaLekci's integration brief of 2026-10-08):
 
-- [Feature 14: subtenant erasure and payer-data retention](docs/features/014-subtenant-erasure-and-payer-data-retention.md)
 - [Feature 15: supported banks and reception readiness](docs/features/015-supported-banks-and-reception-readiness.md)
 - [Feature 16: attention events and the parent attention list](docs/features/016-attention-events-and-parent-attention-list.md)
 - [Feature 17: webhook retry budget and endpoint recovery](docs/features/017-webhook-retry-budget-and-endpoint-recovery.md)
@@ -159,6 +160,8 @@ The recovery check runs once when the API starts and then every `InboundEmail:Di
 The API process runs a background worker for durable jobs in PostgreSQL. `BackgroundJobs` settings: `Enabled` (`true`), `PollInterval` (`00:00:05`), `LeaseDuration` (`00:05:00`), `MaxAttempts` (`6`), and `RetryDelays` (`00:01:00`, `00:05:00`, `00:30:00`, `02:00:00`, `06:00:00`).
 
 Cookie-protection (Data Protection) keys are stored in the `data_protection_keys` table, so sessions survive restarts and work across instances that share the database. The same key ring encrypts webhook signing secrets, so losing it makes deliveries wait as `signing_key_unavailable` until the secret is rotated.
+
+Erasure and retention (Feature 14): `Erasure:MinimumAgeAfterDeletion` (`7.00:00:00`; `0` disables the wait), `Erasure:BatchSize` (`500`), `Retention:PayerData` (`730.00:00:00`), and `Retention:Enabled` (`true`). The retention pass runs at startup and then daily in the API process.
 
 Outgoing webhooks are configured in the `Webhooks` section: `PollInterval` (`00:00:01`), `LeaseDuration` (`00:01:00`), `MaxParallel` (`8`, with at most one request per endpoint in flight), `MaintenanceInterval` (`00:01:00`), and `AllowedLocalDestinations` (empty). The last one lists `host:port` entries, e.g. `localhost:5099`, that may use HTTP and a private address for a local test receiver; the API refuses to start with it outside Development and Testing. Payment matching uses `Matching:SweepInterval` (`00:10:00`) and `Matching:AllowTestEvidence` (`false`, Development and Testing only).
 
@@ -351,6 +354,15 @@ How it works:
 
 Receivers verify the raw body, deduplicate by event ID, and apply only a higher `sequence`; see [docs/webhooks-receiver.md](docs/webhooks-receiver.md).
 
+### Erasure and retention
+
+- `POST /v1/subtenants/{id}/erase` `{reason}` with an `Idempotency-Key`, by a management key or a parent administrator: `202` with the child and its `erasure` (`queued`, `running`, `done`, with counts per record type). Only a deleted child, and only `Erasure:MinimumAgeAfterDeletion` after its deletion (`409 tenant_not_deleted`, `409 erasure_too_early`). A repeat returns the same erasure with `Idempotent-Replayed: true`. `GET /v1/subtenants/{id}` shows `erasure` once requested and `erased_at` once done.
+- **Before erasing, reconcile** anything that needs the original `external_id` or webhook history: erasure replaces caller references with `erased:<id>` tombstones and removes event payloads.
+- The request sets the tenant's permanent collection barrier, abandons queued deliveries of its events at every destination (the parent's included, `abandon_reason: tenant_erased`), and disables its own endpoint and drops its signing secrets. The job then purges in batches; financial facts, symbols, statuses, sequences, allocations, and internal IDs stay, and `payments check` passes. Account snapshots are masked (`…99/0800`, `CZ…0800…99`); the account itself stays in `bank_accounts` (Feature 13), so its symbols and bank references stay unique and a new tenant can register it.
+- Afterwards: stored e-mails are `content_state: erased` (`GET .../source`, `reprocess`, `retry-fetch`: `409 content_erased`), business changes and creation retries are `409 tenant_erased`, event bodies are `null` with `payload_erased_at` and cannot be retried or replayed (`409 event_payload_erased`). Mail to the erased tenant's address is acknowledged and deduplicated but only routing facts are kept. Webhook requests already sent cannot be recalled; the erasure reports `sent_webhook_copies_not_recalled`.
+- **Payer-data retention** on every tenant: `Retention:PayerData` after reception, stored e-mails become `content_state: expired` (`409 content_expired`), and transactions lose their sender fields (`payer_data_purged_at`), whatever their allocation or review state. Amounts, symbols, references, and allocations stay; caller references of active tenants are not touched. A delivery older than the limit is stored the same way.
+- Provider-held mail, backups, exported copies, and log sinks keep their own retention; erasure and retention purge the live database only. A restore must reapply completed erasures and retention before the data is used.
+
 ## Administrative CLI
 
 Root tenants, their keys, and user accounts are managed from the command line, never over HTTP. There is no public signup, invitation flow, or emailed password reset.
@@ -390,6 +402,9 @@ dotnet run --project src/Pairrot.Admin -- reviews show <case-id>
 dotnet run --project src/Pairrot.Admin -- reviews resolve <case-id> --decision <decision> --reason <text> --expected-version <n> \
     [--expected-transaction-versions <id=v,...>] [--reason-code <code>] [--canonical-transaction-id <id>] [--idempotency-key <key>]
 dotnet run --project src/Pairrot.Admin -- webhooks backfill <tenant> --from <time> --to <time> [--apply]
+dotnet run --project src/Pairrot.Admin -- tenants erase <tenant> --reason <text>
+dotnet run --project src/Pairrot.Admin -- tenants erasure-status [<tenant>]
+dotnet run --project src/Pairrot.Admin -- retention run
 ```
 
 All commands accept `--operator <name>`, which is recorded in the audit log. `setup` and the `keys` commands also accept `--root <external-id>` (default `nalekci.cz`). A `<tenant>` is a tenant ID, a root external ID (`nalekci.cz`), or `root/child` (`nalekci.cz/studio_123`).
@@ -403,6 +418,8 @@ The `inbound` commands are the only global view of received mail, quarantined me
 `payments check` verifies that each paid amount equals its active allocations and that no disputed, duplicate, rejected, or reviewed receipt is counted; it exits with 1 when it finds a problem.
 
 `accounts show` lists every registration of an account in every tenant, with status, archived reason, and dates; it is the only global view of an account. `accounts release` archives a registration as the operator, e.g. when the wrong tenant registered an account first, and audits it on the owner. `reviews show` prints a case with its local evidence and the versions a decision needs; `reviews resolve` decides it through the same service, versions, idempotency, and audit as the API, and is the only way to decide an `account_movement_conflict` case.
+
+`tenants erase` erases any tenant, a root included, through the same job as the API: a tenant that is not deleted yet is deleted first (its subtenants must already be deleted), and there is no minimum age. `tenants erasure-status` lists erasures with their state and counts. `retention run` runs one retention pass now and prints the counts per provider instance. `inbound show` reports purged messages as `content erased` or `content expired`.
 
 You can run `setup` again safely. It never creates a second root tenant, never changes an existing one, never replaces keys, and never resets an existing administrator's password. Disabling a user or resetting their password revokes all their sessions, but not the tenant's API keys.
 
@@ -426,6 +443,8 @@ Feature 2 also gives audit events a user actor, with exactly one actor per event
 Feature 12 adds `variable_symbol_allocators` (one row per bank connection, created on first use, `next_candidate` from `1` to the exhausted sentinel `10000000000`). `payment_requests` gains `variable_symbol_source` (`supplied` or `automatic`; existing rows are `supplied`) and a stored `variable_symbol_number` with an index for the allocator's gap search. Stored symbols, keys, payloads, and fingerprints are unchanged; automatic creations use a separate `v2` fingerprint. Deploy the migration and the application together, without older instances still writing.
 
 Feature 13 adds `bank_accounts` (one row per normalized IBAN, never deleted) and `bank_account_id` on bank connections, payment requests and their changes, transactions, parse runs, source links, review cases and members, and allocations. Every record's connection reference includes the tenant and the account, and references between records use the tenant and the account, so the database rejects links across owners or accounts while allowing links across one account's registrations. Allocations keep the transaction's and the request's connection. `bank_connections_iban_unique` is replaced by a partial unique index on active registrations; `archived_reason` is added (`user` for archived rows; active connections of deleted tenants are archived as `tenant_deleted`). The allocator, the variable-symbol index, the bank-reference index, and the fingerprint index move to the account, and every comparison fingerprint is recomputed as `v2`. The migration runs in one transaction and ends with a self-check (accounts, allocators, one active registration per account, consistent account IDs, unique references, fingerprints, and the `payments check` rules); any failure rolls it back. Record IDs, financial facts, symbols, and allocations are unchanged. Deploy it together with the application, without older instances still writing.
+
+Feature 14 adds `tenant_erasures` (one per tenant: state, requester, counts, limitations; the reason is removed when done) and `erasure_requested_at`/`erased_at` on `tenants`, `erased_at` on bank connections, forwarding sources, payment requests, webhook endpoints, and transactions, `payload_erased_at` on webhook events, `purged_at` on parse runs, and `payer_data_purged_at` on transactions. Inbound messages gain the content states `expired` and `erased`, which keep no sender or content fields. Webhook URLs, event bodies, QR payloads, command responses, and forwarding addresses become nullable; check constraints allow masked account snapshots and missing payloads only on erased rows. Existing rows are unchanged.
 
 Feature 6 adds `inbound_addresses`, `inbound_delivery_receipts`, `inbound_messages`, `background_jobs`, and `inbound_sync_states`, and moves the Feature 3 address columns of `bank_connections` into `inbound_addresses` without changing any address or owner. Addresses are globally unique, retired ones included, and at most one is active per connection; an address on a reserved test domain can never be live. Messages reference their tenant, connection, and address through composite foreign keys, so an owner always matches, and an unrouted message has no owner at all. Jobs allow one active job per operation and target.
 

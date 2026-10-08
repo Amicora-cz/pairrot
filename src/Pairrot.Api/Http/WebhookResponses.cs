@@ -22,11 +22,12 @@ public sealed record WebhookCountsResponse(int Pending, int RetryWait, int Runni
 /// <param name="Status"><c>paused</c>, <c>configured</c>, <c>test_accepted</c>, <c>delivering</c>, or <c>failing</c>.</param>
 public sealed record WebhookHealthResponse(string Status, DateTimeOffset? LastTestAcceptedAt, DateTimeOffset? LastSuccessAt, int CurrentFailures);
 
+/// <param name="Url"><c>null</c> once the endpoint was erased with its tenant (Feature 014).</param>
 /// <param name="Version">The ETag for <c>PATCH</c> and <c>expected_version</c> for rotation.</param>
 public sealed record WebhookEndpointResponse(
     Guid Id,
     Guid TenantId,
-    string Url,
+    string? Url,
     string Scope,
     string State,
     string Environment,
@@ -36,7 +37,8 @@ public sealed record WebhookEndpointResponse(
     WebhookHealthResponse Health,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    int Version)
+    int Version,
+    DateTimeOffset? ErasedAt)
 {
     public static WebhookEndpointResponse From(EndpointView view)
     {
@@ -61,7 +63,8 @@ public sealed record WebhookEndpointResponse(
             new WebhookHealthResponse(status, e.LastTestAcceptedAt, e.LastSuccessAt, failures + c.RetryWait),
             e.CreatedAt,
             e.UpdatedAt,
-            e.Version);
+            e.Version,
+            e.ErasedAt);
     }
 }
 
@@ -74,7 +77,9 @@ public sealed record SignedEndpointResponse(WebhookEndpointResponse Endpoint, Si
         new(WebhookEndpointResponse.From(reveal.Endpoint), new SigningSecretResponse(reveal.KeyId, reveal.Secret));
 }
 
-/// <param name="Body">The exact JSON sent to receivers.</param>
+/// <param name="Body">The exact JSON sent to receivers; <c>null</c> once erased with its owner, never rebuilt.</param>
+/// <param name="BodySha256">The digest of the original body; kept after erasure.</param>
+/// <param name="PayloadErasedAt">Feature 014: when the body was erased; the event cannot be retried or replayed.</param>
 public sealed record WebhookEventResponse(
     Guid Id,
     string Type,
@@ -84,11 +89,13 @@ public sealed record WebhookEventResponse(
     string Environment,
     bool Synthetic,
     DateTimeOffset CreatedAt,
-    JsonElement Body)
+    JsonElement? Body,
+    string BodySha256,
+    DateTimeOffset? PayloadErasedAt)
 {
     public static WebhookEventResponse From(WebhookEvent e) => new(
         e.Id, e.Type, e.TenantId, e.PaymentRequestId, e.Sequence, InboundMessageResponse.Snake(e.Environment), e.Synthetic, e.CreatedAt,
-        JsonDocument.Parse(e.Body).RootElement.Clone());
+        e.Body is null ? null : JsonDocument.Parse(e.Body).RootElement.Clone(), e.BodySha256, e.PayloadErasedAt);
 }
 
 /// <param name="State"><c>pending</c>, <c>running</c>, <c>retry_wait</c>, <c>delivered</c>, <c>failed</c>, <c>held</c>, or <c>abandoned</c>.</param>
@@ -147,7 +154,7 @@ public sealed record WebhookAttemptResponse(
     int Generation,
     int AttemptNumber,
     int DestinationRevision,
-    string Url,
+    string? Url,
     string KeyIds,
     string Outcome,
     int? HttpStatus,
@@ -163,7 +170,7 @@ public sealed record WebhookAttemptResponse(
 }
 
 public sealed record WebhookDeliveryDetailResponse(
-    WebhookDeliveryResponse Delivery, WebhookEventResponse Event, IReadOnlyList<WebhookAttemptResponse> Attempts, string CurrentUrl)
+    WebhookDeliveryResponse Delivery, WebhookEventResponse Event, IReadOnlyList<WebhookAttemptResponse> Attempts, string? CurrentUrl)
 {
     public static WebhookDeliveryDetailResponse From(DeliveryView view) => new(
         WebhookDeliveryResponse.From(view.Delivery),

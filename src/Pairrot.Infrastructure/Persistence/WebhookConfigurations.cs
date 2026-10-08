@@ -21,6 +21,8 @@ internal sealed class WebhookEndpointConfiguration : IEntityTypeConfiguration<We
             t.HasCheckConstraint("webhook_endpoints_state_valid", $"state IN ({SnakeCaseEnum<WebhookEndpointState>.SqlList})");
             t.HasCheckConstraint("webhook_endpoints_environment_valid", "environment IN ('test', 'live')");
             t.HasCheckConstraint("webhook_endpoints_counters_valid", "destination_revision >= 1 AND version >= 1");
+            t.HasCheckConstraint("webhook_endpoints_erasure_consistent",
+                "(erased_at IS NULL AND url IS NOT NULL) OR (erased_at IS NOT NULL AND url IS NULL AND state = 'paused')");
         });
 
         builder.HasKey(e => e.Id);
@@ -91,6 +93,7 @@ internal sealed class WebhookEventConfiguration : IEntityTypeConfiguration<Webho
                 "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND sequence IS NULL AND environment = 'test') "
                 + "OR (NOT synthetic AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND sequence IS NOT NULL)");
             t.HasCheckConstraint("webhook_events_digest_format", "body_sha256 ~ '^[0-9a-f]{64}$'");
+            t.HasCheckConstraint("webhook_events_payload_consistent", "(body IS NULL) = (payload_erased_at IS NOT NULL)");
         });
 
         builder.HasKey(e => e.Id);

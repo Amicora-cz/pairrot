@@ -21,6 +21,8 @@ public sealed record ConfigurationResponse(string Name, string? ContactEmail)
     public static ConfigurationResponse From(Tenant tenant) => new(tenant.Name, tenant.ContactEmail);
 }
 
+/// <param name="ErasedAt">Feature 014: when the erasure completed; the name and external ID are placeholders since.</param>
+/// <param name="Erasure">The erasure, once requested; returned by <c>GET /v1/subtenants/{id}</c> and the erase command.</param>
 public sealed record TenantResponse(
     Guid Id,
     Guid? ParentTenantId,
@@ -30,9 +32,11 @@ public sealed record TenantResponse(
     CapabilitiesResponse Capabilities,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? DeletedAt)
+    DateTimeOffset? DeletedAt,
+    DateTimeOffset? ErasedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ErasureResponse? Erasure = null)
 {
-    public static TenantResponse From(Tenant tenant) => new(
+    public static TenantResponse From(Tenant tenant, TenantErasure? erasure = null) => new(
         tenant.Id,
         tenant.ParentTenantId,
         tenant.ExternalId,
@@ -41,7 +45,22 @@ public sealed record TenantResponse(
         new CapabilitiesResponse(tenant.CanCreateSubtenants, tenant.CanCreateCampaigns),
         tenant.CreatedAt,
         tenant.UpdatedAt,
-        tenant.DeletedAt);
+        tenant.DeletedAt,
+        tenant.ErasedAt,
+        erasure is null ? null : ErasureResponse.From(erasure));
+}
+
+/// <param name="State"><c>queued</c>, <c>running</c>, or <c>done</c>.</param>
+/// <param name="RequestedBy">The technical actor, e.g. <c>api_key:…</c>; never a name.</param>
+/// <param name="Counts">Records changed per record type so far.</param>
+/// <param name="Limitations">What Pairrot cannot undo, e.g. <c>sent_webhook_copies_not_recalled</c>.</param>
+public sealed record ErasureResponse(
+    Guid Id, string State, DateTimeOffset RequestedAt, DateTimeOffset? CompletedAt, string RequestedBy, Guid JobId,
+    JsonElement Counts, JsonElement Limitations)
+{
+    public static ErasureResponse From(TenantErasure e) => new(
+        e.Id, InboundMessageResponse.Snake(e.State), e.RequestedAt, e.CompletedAt, e.RequestedBy, e.JobId,
+        JsonSerializer.Deserialize<JsonElement>(e.Counts), JsonSerializer.Deserialize<JsonElement>(e.Limitations));
 }
 
 public sealed record ApiKeyResponse(
@@ -123,6 +142,7 @@ public sealed record AuditEventResponse(
 /// <param name="AddressReplaced">Address assignment only: <c>true</c> when a test address was retired for a new live one.</param>
 /// <param name="BankAccountId">The physical account (Feature 013): the same for every registration of it.</param>
 /// <param name="ArchivedReason"><c>user</c>, <c>tenant_deleted</c>, or <c>operator</c>; <c>null</c> while active.</param>
+/// <param name="ErasedAt">Feature 014: erased with its tenant; the label is gone and the account is masked.</param>
 public sealed record BankConnectionResponse(
     Guid Id,
     Guid TenantId,
@@ -143,6 +163,7 @@ public sealed record BankConnectionResponse(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? ArchivedAt,
     string? ArchivedReason,
+    DateTimeOffset? ErasedAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AddressReplaced = null)
 {
     public static BankConnectionResponse From(BankConnectionView view, string providerName)
@@ -176,6 +197,7 @@ public sealed record BankConnectionResponse(
             c.UpdatedAt,
             c.ArchivedAt,
             c.ArchivedReason is { } reason ? InboundMessageResponse.Snake(reason) : null,
+            c.ErasedAt,
             view.ReplacedStub);
     }
 }
@@ -368,6 +390,7 @@ public sealed record PaymentQrResponse(
 /// </summary>
 /// <param name="Replayed">Creation only: <c>true</c> when an earlier identical creation was returned.</param>
 /// <param name="PaymentInstructions">Creation only, and only while the request is payable.</param>
+/// <param name="ErasedAt">Feature 014: erased with its tenant; <c>external_id</c> is a tombstone and the free text is gone.</param>
 public sealed record PaymentRequestResponse(
     Guid Id,
     Guid TenantId,
@@ -393,6 +416,7 @@ public sealed record PaymentRequestResponse(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? CancelledAt,
     int Version,
+    DateTimeOffset? ErasedAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Replayed = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PaymentInstructionsResponse? PaymentInstructions = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<Guid>? OpenReviewCaseIds = null)
@@ -423,7 +447,8 @@ public sealed record PaymentRequestResponse(
         p.CreatedAt,
         p.UpdatedAt,
         p.CancelledAt,
-        p.Version);
+        p.Version,
+        p.ErasedAt);
 }
 
 /// <summary>The payment instructions saved when the request was created; <c>payload</c> is never regenerated.</summary>
@@ -453,5 +478,5 @@ public sealed record PaymentInstructionsResponse(
         p.Message,
         p.QrFormat,
         p.QrGeneratorVersion,
-        p.QrPayload);
+        p.QrPayload!);
 }

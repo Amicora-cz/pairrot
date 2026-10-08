@@ -20,6 +20,7 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantApiKey> ApiKeys => Set<TenantApiKey>();
     public DbSet<TenantAuditEvent> AuditEvents => Set<TenantAuditEvent>();
+    public DbSet<TenantErasure> TenantErasures => Set<TenantErasure>();
     public DbSet<TenantMembership> Memberships => Set<TenantMembership>();
     public DbSet<UserSession> Sessions => Set<UserSession>();
     public DbSet<UserAuditEvent> UserAuditEvents => Set<UserAuditEvent>();

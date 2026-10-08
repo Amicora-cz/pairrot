@@ -1,6 +1,6 @@
 # Feature 014: subtenant erasure and payer-data retention
 
-Status: proposed. Builds on [Feature 013](./013-bank-account-identity-and-reuse.md).
+Status: implemented (see [Implementation notes](#implementation-notes)). Builds on [Feature 013](./013-bank-account-identity-and-reuse.md).
 
 ## Goal and scope
 
@@ -113,3 +113,13 @@ These operations purge the live Pairrot database. Provider-held mail, exported c
 ## 7. Not included
 
 Erasure of payers on request (a payer asking Pairrot directly), export of a tenant's data, erasure of root tenants over HTTP, and any change to deletion itself.
+
+## Implementation notes
+
+- **Barrier.** `tenants.erasure_requested_at` is the collection barrier and, being permanent, also serves as the data epoch: no counter is needed. Data-producing commits (intake, content retrieval, parsing, webhook event creation, webhook results) take the tenant's shared advisory lock in their own transaction and then check it; the erase request sets it under the exclusive lock. Content retrieval and parsing also lock the message row before committing, which orders them against retention.
+- **Erasure job.** `erase_tenant` (target: the tenant) runs a fixed list of purge steps, each changing at most `Erasure:BatchSize` rows that still hold personal data. Every batch is one transaction that also locks the job row and checks the lease, and adds its row count to `tenant_erasures.counts`; a resumed job therefore reports the counts of an uninterrupted run. A pass that changes nothing is the final verification. While a webhook request of the tenant is in flight, the job waits (retry at the lease expiry) and purges its result afterwards.
+- **Retained, as allowed:** internal IDs, amounts, currencies, symbols, bank references, statuses, sequences, versions, timestamps, technical actors, reason codes, digests (`content_sha256`, `body_sha256`, receipt digests), opaque provider IDs and content references, the reserved routing address, and normalized authentication results. Inbound addresses keep their address; erased messages keep only it among their recipients.
+- **Placeholders.** Required free text becomes `erased` (allocation, decision, and handling reasons, review case texts); caller references become `erased:<record id>` (`payment_request_changes` use the request's ID). Command receipts keep `sha256:<hex>` of the key and no response; a retry with that key is `409 tenant_erased`. The masks are computed in SQL; the IBAN mask has the database pattern `^CZ…[0-9]{4}…[0-9]{2}$`. Payment requests use one `erased_at` instead of a separate `qr_erased_at`.
+- **Operator CLI.** `tenants erase` deletes a tenant that is not deleted yet (refused while it has subtenants that are not deleted) and skips the minimum age. The erasure's single audit event `tenant.erased` has the actor `pairrot:erasure`.
+- **Retention** marks messages `expired` with the same field purge, then purges receipts, parse runs, review texts quoting them, and job errors of those messages, and the sender fields of transactions received before the cutoff. Review texts are set to `expired`. Retention is skipped in intake and workers when `Retention:Enabled` is false.
+- **Acting-user attribution** (Feature 018) does not exist yet; its erasure is part of Feature 018.

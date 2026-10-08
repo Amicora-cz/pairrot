@@ -21,6 +21,7 @@ public static class AuditActions
     public const string TenantConfigurationUpdated = "tenant.configuration_updated";
     public const string TenantStatusChanged = "tenant.status_changed";
     public const string TenantDeleted = "tenant.deleted";
+    public const string TenantErased = "tenant.erased";
     public const string ApiKeyIssued = "api_key.issued";
     public const string ApiKeyRevoked = "api_key.revoked";
     public const string MembershipAdded = "membership.added";

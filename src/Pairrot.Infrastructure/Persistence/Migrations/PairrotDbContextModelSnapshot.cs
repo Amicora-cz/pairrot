@@ -215,6 +215,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(3)")
                         .HasColumnName("currency");
 
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
+
                     b.Property<string>("Iban")
                         .IsRequired()
                         .HasMaxLength(34)
@@ -276,7 +280,9 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("bank_connections_currency_valid", "currency = 'CZK'");
 
-                            t.HasCheckConstraint("bank_connections_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+                            t.HasCheckConstraint("bank_connections_erased_archived", "erased_at IS NULL OR (status = 'archived' AND label IS NULL)");
+
+                            t.HasCheckConstraint("bank_connections_iban_format", "iban ~ '^CZ[0-9]{22}$' OR (erased_at IS NOT NULL AND iban ~ '^CZ…[0-9]{4}…[0-9]{2}$')");
 
                             t.HasCheckConstraint("bank_connections_label_not_blank", "label IS NULL OR btrim(label) <> ''");
 
@@ -291,7 +297,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     b.Property<string>("Address")
-                        .IsRequired()
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)")
                         .HasColumnName("address");
@@ -303,6 +308,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
 
                     b.Property<DateTimeOffset?>("RemovedAt")
                         .HasColumnType("timestamp with time zone")
@@ -341,7 +350,7 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                     b.ToTable("forwarding_sources", null, t =>
                         {
-                            t.HasCheckConstraint("forwarding_sources_address_normalized", "address = lower(btrim(address)) AND address LIKE '_%@_%'");
+                            t.HasCheckConstraint("forwarding_sources_address_normalized", "(address = lower(btrim(address)) AND address LIKE '_%@_%') OR (address IS NULL AND erased_at IS NOT NULL)");
 
                             t.HasCheckConstraint("forwarding_sources_state_consistent", "(state = 'active' AND removed_at IS NULL) OR (state = 'removed' AND removed_at IS NOT NULL)");
 
@@ -821,17 +830,17 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("inbound_messages_authentication_valid", "spf_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown') AND dkim_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown') AND dmarc_result IN ('fail', 'neutral', 'none', 'pass', 'permerror', 'policy', 'softfail', 'temperror', 'unknown')");
 
-                            t.HasCheckConstraint("inbound_messages_content_consistent", "(content_state = 'available' AND content_sha256 IS NOT NULL AND content_stored_at IS NOT NULL) OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL) OR (content_state = 'skipped' AND content_sha256 IS NULL AND content_stored_at IS NULL AND text_body IS NULL AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL)");
+                            t.HasCheckConstraint("inbound_messages_content_consistent", "(content_state = 'available' AND content_sha256 IS NOT NULL AND content_stored_at IS NOT NULL) OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL) OR (content_state = 'skipped' AND content_sha256 IS NULL AND content_stored_at IS NULL AND text_body IS NULL AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL) OR (content_state IN ('expired', 'erased') AND text_body IS NULL AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL AND content_recipients IS NULL AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL AND sender_domain IS NULL AND transport_metadata IS NULL AND authentication_raw IS NULL AND fetch_error_message IS NULL)");
 
                             t.HasCheckConstraint("inbound_messages_content_digest_format", "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'");
 
                             t.HasCheckConstraint("inbound_messages_content_mode_consistent", "(content_mode = 'deferred' AND content_reference IS NOT NULL) OR (content_mode = 'inline' AND content_reference IS NULL)");
 
-                            t.HasCheckConstraint("inbound_messages_content_state_valid", "content_state IN ('pending', 'available', 'failed', 'skipped')");
+                            t.HasCheckConstraint("inbound_messages_content_state_valid", "content_state IN ('pending', 'available', 'failed', 'skipped', 'expired', 'erased')");
 
                             t.HasCheckConstraint("inbound_messages_environment_valid", "environment IN ('test', 'live')");
 
-                            t.HasCheckConstraint("inbound_messages_foreign_minimal", "(sender_class IS DISTINCT FROM 'foreign' AND hold_reason IS DISTINCT FROM 'address_paused') OR (content_state = 'skipped' AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL AND transport_metadata IS NULL AND retain_until IS NOT NULL)");
+                            t.HasCheckConstraint("inbound_messages_foreign_minimal", "(sender_class IS DISTINCT FROM 'foreign' AND hold_reason IS DISTINCT FROM 'address_paused') OR (content_state IN ('skipped', 'expired', 'erased') AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL AND transport_metadata IS NULL AND retain_until IS NOT NULL)");
 
                             t.HasCheckConstraint("inbound_messages_hold_reason_valid", "hold_reason IS NULL OR hold_reason IN ('address_retired', 'bank_connection_archived', 'tenant_not_active', 'recipient_mismatch', 'address_paused')");
 
@@ -1074,7 +1083,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("resource_ids");
 
                     b.Property<string>("ResponseBody")
-                        .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("response_body");
 
@@ -1685,6 +1693,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("due_at");
 
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
+
                     b.Property<string>("ExternalId")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1719,7 +1731,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("qr_generator_version");
 
                     b.Property<string>("QrPayload")
-                        .IsRequired()
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("qr_payload");
@@ -1809,11 +1820,13 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("payment_requests_currency_valid", "currency = 'CZK'");
 
+                            t.HasCheckConstraint("payment_requests_erasure_consistent", "(erased_at IS NULL AND qr_payload IS NOT NULL) OR (erased_at IS NOT NULL AND qr_payload IS NULL AND message IS NULL AND description IS NULL AND cancellation_reason IS NULL AND external_id LIKE 'erased:%')");
+
                             t.HasCheckConstraint("payment_requests_external_id_not_blank", "btrim(external_id) <> ''");
 
                             t.HasCheckConstraint("payment_requests_fingerprint_format", "creation_fingerprint ~ '^[0-9a-f]{64}$'");
 
-                            t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+                            t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$' OR (erased_at IS NOT NULL AND iban ~ '^CZ…[0-9]{4}…[0-9]{2}$')");
 
                             t.HasCheckConstraint("payment_requests_paid_consistent", "(status = 'open' AND paid_amount = 0) OR (status = 'partially_paid' AND paid_amount > 0 AND paid_amount < amount) OR (status = 'paid' AND paid_amount = amount) OR (status = 'overpaid' AND paid_amount > amount) OR (status = 'cancelled' AND paid_amount = 0)");
 
@@ -1877,6 +1890,14 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
+
+                    b.Property<DateTimeOffset?>("ErasureRequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erasure_requested_at");
+
                     b.Property<string>("ExternalId")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1929,6 +1950,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("tenants_deletion_consistent", "(status = 'deleted' AND deleted_at IS NOT NULL) OR (status <> 'deleted' AND deleted_at IS NULL)");
 
                             t.HasCheckConstraint("tenants_email_not_blank", "contact_email IS NULL OR btrim(contact_email) <> ''");
+
+                            t.HasCheckConstraint("tenants_erasure_consistent", "(erasure_requested_at IS NULL AND erased_at IS NULL) OR (erasure_requested_at IS NOT NULL AND status = 'deleted' AND (erased_at IS NULL OR erased_at >= erasure_requested_at))");
 
                             t.HasCheckConstraint("tenants_external_id_not_blank", "btrim(external_id) <> ''");
 
@@ -2048,6 +2071,85 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Pairrot.Core.Tenants.TenantErasure", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<string>("Counts")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("counts");
+
+                    b.Property<string>("IdempotencyKeySha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("idempotency_key_sha256");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<string>("Limitations")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("limitations");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_at");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("requested_by");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("state");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tenant_erasures");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("tenant_erasures_tenant_unique");
+
+                    b.ToTable("tenant_erasures", null, t =>
+                        {
+                            t.HasCheckConstraint("tenant_erasures_completion_consistent", "(state = 'done' AND completed_at IS NOT NULL AND reason IS NULL) OR (state <> 'done' AND completed_at IS NULL)");
+
+                            t.HasCheckConstraint("tenant_erasures_counts_object", "jsonb_typeof(counts) = 'object'");
+
+                            t.HasCheckConstraint("tenant_erasures_key_digest_format", "idempotency_key_sha256 IS NULL OR idempotency_key_sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("tenant_erasures_limitations_array", "jsonb_typeof(limitations) = 'array'");
+
+                            t.HasCheckConstraint("tenant_erasures_state_valid", "state IN ('queued', 'running', 'done')");
+                        });
+                });
+
             modelBuilder.Entity("Pairrot.Core.Transactions.IncomingTransaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2119,6 +2221,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)")
                         .HasColumnName("environment");
+
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
 
                     b.Property<DateTimeOffset?>("HandledAt")
                         .HasColumnType("timestamp with time zone")
@@ -2192,6 +2298,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
                         .HasColumnName("parser_version");
+
+                    b.Property<DateTimeOffset?>("PayerDataPurgedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("payer_data_purged_at");
 
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone")
@@ -2352,6 +2462,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
                         .HasColumnName("parser_version");
+
+                    b.Property<DateTimeOffset?>("PurgedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purged_at");
 
                     b.Property<string>("ReasonCode")
                         .IsRequired()
@@ -2864,7 +2978,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("started_at");
 
                     b.Property<string>("Url")
-                        .IsRequired()
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("url");
@@ -2909,7 +3022,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("revision");
 
                     b.Property<string>("Url")
-                        .IsRequired()
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("url");
@@ -2947,6 +3059,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(10)")
                         .HasColumnName("environment");
 
+                    b.Property<DateTimeOffset?>("ErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("erased_at");
+
                     b.Property<DateTimeOffset?>("LastSuccessAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_success_at");
@@ -2976,7 +3092,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("updated_at");
 
                     b.Property<string>("Url")
-                        .IsRequired()
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)")
                         .HasColumnName("url");
@@ -2999,6 +3114,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("webhook_endpoints_environment_valid", "environment IN ('test', 'live')");
 
+                            t.HasCheckConstraint("webhook_endpoints_erasure_consistent", "(erased_at IS NULL AND url IS NOT NULL) OR (erased_at IS NOT NULL AND url IS NULL AND state = 'paused')");
+
                             t.HasCheckConstraint("webhook_endpoints_scope_valid", "scope IN ('own', 'own_and_direct_children')");
 
                             t.HasCheckConstraint("webhook_endpoints_state_valid", "state IN ('paused', 'active')");
@@ -3012,7 +3129,6 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     b.Property<string>("Body")
-                        .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("body");
 
@@ -3031,6 +3147,10 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)")
                         .HasColumnName("environment");
+
+                    b.Property<DateTimeOffset?>("PayloadErasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("payload_erased_at");
 
                     b.Property<Guid?>("PaymentChangeId")
                         .HasColumnType("uuid")
@@ -3083,6 +3203,8 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("webhook_events_environment_valid", "environment IN ('test', 'live')");
 
                             t.HasCheckConstraint("webhook_events_kind_consistent", "(synthetic AND payment_change_id IS NULL AND payment_request_id IS NULL AND sequence IS NULL AND environment = 'test') OR (NOT synthetic AND payment_change_id IS NOT NULL AND payment_request_id IS NOT NULL AND sequence IS NOT NULL)");
+
+                            t.HasCheckConstraint("webhook_events_payload_consistent", "(body IS NULL) = (payload_erased_at IS NOT NULL)");
                         });
                 });
 
@@ -3535,6 +3657,16 @@ namespace Pairrot.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_tenant_audit_events_tenants_target_tenant_id");
+                });
+
+            modelBuilder.Entity("Pairrot.Core.Tenants.TenantErasure", b =>
+                {
+                    b.HasOne("Pairrot.Core.Tenants.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_tenant_erasures_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Pairrot.Core.Transactions.IncomingTransaction", b =>

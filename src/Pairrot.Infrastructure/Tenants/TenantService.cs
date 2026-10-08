@@ -162,22 +162,32 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
             return true;
         }
 
+        await MarkDeletedAsync(child, actor, ct);
+        return await SaveAsync(true, ct);
+    }
+
+    /// <summary>
+    /// Marks a tracked tenant (with its keys loaded) deleted, revokes its keys, and archives its
+    /// active connections; the caller saves. Shared by DELETE and the operator's erasure (Feature 014).
+    /// </summary>
+    internal async Task MarkDeletedAsync(Tenant tenant, Actor actor, CancellationToken ct)
+    {
         var now = Now();
         var revoked = 0;
-        foreach (var key in child.ApiKeys.Where(k => k.RevokedAt is null))
+        foreach (var key in tenant.ApiKeys.Where(k => k.RevokedAt is null))
         {
             key.RevokedAt = now;
             revoked++;
         }
 
-        var previousStatus = child.Status;
-        child.Status = TenantStatus.Deleted;
-        child.DeletedAt = now;
-        child.UpdatedAt = now;
+        var previousStatus = tenant.Status;
+        tenant.Status = TenantStatus.Deleted;
+        tenant.DeletedAt = now;
+        tenant.UpdatedAt = now;
 
         // Feature 013: deletion releases the tenant's accounts, so a new registration may use them.
         var released = await db.BankConnections
-            .Where(b => b.TenantId == child.Id && b.Status == BankConnectionStatus.Active)
+            .Where(b => b.TenantId == tenant.Id && b.Status == BankConnectionStatus.Active)
             .ToListAsync(ct);
         foreach (var connection in released)
         {
@@ -185,17 +195,15 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
             connection.ArchivedAt = now;
             connection.ArchivedReason = BankConnectionArchivedReason.TenantDeleted;
             connection.UpdatedAt = now;
-            AddAudit(actor, child.Id, AuditActions.BankConnectionArchived, new { ConnectionId = connection.Id, Reason = "tenant_deleted" });
+            AddAudit(actor, tenant.Id, AuditActions.BankConnectionArchived, new { ConnectionId = connection.Id, Reason = "tenant_deleted" });
         }
 
-        AddAudit(actor, child.Id, AuditActions.TenantDeleted, new
+        AddAudit(actor, tenant.Id, AuditActions.TenantDeleted, new
         {
             From = Lower(previousStatus),
             RevokedKeyCount = revoked,
             ArchivedBankConnectionCount = released.Count,
         });
-
-        return await SaveAsync(true, ct);
     }
 
     public async Task<ServiceResult<IReadOnlyList<TenantApiKey>>> ListSubtenantKeysAsync(
@@ -229,7 +237,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
 
         if (child.Status == TenantStatus.Deleted)
         {
-            return TenantDeleted();
+            return TenantDeleted(child);
         }
 
         var issued = AddKey(child.Id, ApiKeyPurpose.Tenant, label, actor);
@@ -283,7 +291,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
 
         if (tenant.Status == TenantStatus.Deleted)
         {
-            return TenantDeleted();
+            return TenantDeleted(tenant);
         }
 
         if (purpose == ApiKeyPurpose.Management && !(tenant.IsRoot && tenant.CanCreateSubtenants))
@@ -372,7 +380,7 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
     {
         if (tenant.Status == TenantStatus.Deleted)
         {
-            return TenantDeleted();
+            return TenantDeleted(tenant);
         }
 
         if (change.Name.HasValue && TenantRules.ValidateName(change.Name.Value) is { } nameError)
@@ -463,6 +471,10 @@ public class TenantService(PairrotDbContext db, TimeProvider time)
     private static ServiceError DuplicateExternalId() =>
         ServiceError.Conflict("duplicate_external_id", "A subtenant with this external_id already exists.");
 
-    private static ServiceError TenantDeleted() =>
-        ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot be changed.");
+    /// <summary><c>tenant_deleted</c>, or <c>tenant_erased</c> once erasure was requested (Feature 014).</summary>
+    internal static ServiceError TenantDeleted(Tenant tenant, string message = "The tenant is deleted and cannot be changed.") =>
+        tenant.ErasureRequestedAt is not null ? TenantErased() : ServiceError.Conflict("tenant_deleted", message);
+
+    internal static ServiceError TenantErased() =>
+        ServiceError.Conflict("tenant_erased", "The tenant is erased; its records are history only and nothing is created for it.");
 }

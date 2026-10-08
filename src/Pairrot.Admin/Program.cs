@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Inbound;
 using Pairrot.Infrastructure;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Persistence;
@@ -30,6 +31,13 @@ const string Usage = """
       keys issue --purpose <tenant|management> [--label <l>]
                                                Issue an additional root key; the secret is shown once.
       keys revoke <key-id>                     Revoke a root key.
+
+      tenants erase <t> --reason <text>        Erase a tenant (Feature 14), a root included: personal
+                                               data is purged in the background, financial facts
+                                               stay. A tenant that is not deleted is deleted first;
+                                               its subtenants must be deleted. No minimum age.
+      tenants erasure-status [<t>]             Queued, running, and done erasures with counts.
+      retention run                            Run one payer-data retention pass now and print counts.
 
       users list                               List users and their tenant memberships.
       users create --email <e> [--tenant <t>]  Create a user (password prompted) and optionally make
@@ -220,6 +228,65 @@ switch (args)
         return 0;
     }
 
+    case ["tenants", "erase", var tenantReference, ..]:
+    {
+        if (await userAdmin.FindTenantAsync(tenantReference) is not { } tenant)
+        {
+            Console.Error.WriteLine($"Tenant '{tenantReference}' was not found.");
+            return 1;
+        }
+
+        var result = await services.GetRequiredService<TenantErasureService>()
+            .RequestAsOperatorAsync(tenant.Id, options.GetValueOrDefault("reason"), Actor.Administrator(operatorName));
+        return Report(result, outcome => outcome.Replayed
+            ? $"Erasure of {tenant.Id} was already requested ({Snake(outcome.Erasure.State)}); nothing changed."
+            : $"Erasure of {tenant.Id} is queued (job {outcome.Erasure.JobId}); the API's worker runs it. "
+                + "Check it with tenants erasure-status.");
+    }
+
+    case ["tenants", "erasure-status", ..]:
+    {
+        Guid? only = null;
+        if (args.Length > 2 && !args[2].StartsWith("--", StringComparison.Ordinal))
+        {
+            if (await userAdmin.FindTenantAsync(args[2]) is not { } tenant)
+            {
+                Console.Error.WriteLine($"Tenant '{args[2]}' was not found.");
+                return 1;
+            }
+
+            only = tenant.Id;
+        }
+
+        foreach (var (tenant, erasure) in await services.GetRequiredService<TenantErasureService>().ListAsync(only))
+        {
+            var parent = tenant.ParentTenant is { } p ? $"child of {p.ExternalId}" : "root";
+            Console.WriteLine($"{tenant.Id}  {Snake(erasure.State),-7}  {parent}  requested {erasure.RequestedAt:u} by {erasure.RequestedBy}"
+                + (erasure.CompletedAt is { } done ? $", done {done:u}" : ""));
+            Console.WriteLine($"  counts       {erasure.Counts}");
+            if (erasure.Limitations != "[]")
+            {
+                Console.WriteLine($"  limitations  {erasure.Limitations}");
+            }
+        }
+
+        return 0;
+    }
+
+    case ["retention", "run", ..]:
+    {
+        var report = await services.GetRequiredService<PayerDataRetention>().RunAsync();
+        Console.WriteLine($"Payer data received before {report.Cutoff:u} is purged.");
+        foreach (var (instance, count) in report.MessagesByInstance.OrderBy(i => i.Key, StringComparer.Ordinal))
+        {
+            Console.WriteLine($"  {instance,-20} {count,6} message(s) expired");
+        }
+
+        Console.WriteLine($"  {report.Messages} message(s), {report.Receipts} delivery payload(s), {report.ParseRuns} parse run(s), "
+            + $"{report.ReviewCases} review text(s), {report.JobErrors} job error(s), {report.Transactions} transaction(s).");
+        return 0;
+    }
+
     case ["users", "list", ..]:
     {
         foreach (var item in await userAdmin.ListAsync())
@@ -344,7 +411,12 @@ switch (args)
 
         Console.WriteLine($"Hold         {(m.HoldReason is { } hold ? Snake(hold) : "none")}");
         Console.WriteLine($"Sender class {(m.SenderClass is { } senderClass ? Snake(senderClass) : "-")} ({m.SenderDomain ?? "no domain"}){(m.RetainUntil is { } until ? $", deleted after {until:u}" : "")}");
-        Console.WriteLine($"Content      {Snake(m.ContentState)}{(m.ContentStoredAt is { } at ? $", stored {at:u}, sha256 {m.ContentSha256}" : "")}");
+        Console.WriteLine(m.ContentState switch
+        {
+            InboundContentState.Erased => "Content      content erased (the tenant was erased; only routing facts remain)",
+            InboundContentState.Expired => "Content      content expired (purged by the payer-data retention limit)",
+            _ => $"Content      {Snake(m.ContentState)}{(m.ContentStoredAt is { } at ? $", stored {at:u}, sha256 {m.ContentSha256}" : "")}",
+        });
         Console.WriteLine($"Sender auth  spf={m.SpfResult} dkim={m.DkimResult} dmarc={m.DmarcResult} ({m.AuthenticationOrigin ?? "no evidence"})");
         if (m.FetchErrorCode is not null)
         {

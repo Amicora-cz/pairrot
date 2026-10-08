@@ -128,7 +128,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return ServiceError.NotFound();
         }
 
-        if (CheckChangeable(owner.Status) is { } stateError)
+        if (CheckChangeable(owner) is { } stateError)
         {
             return stateError;
         }
@@ -144,7 +144,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         // this request is saved; one that changed first is read here in its new state.
         var ownerStatus = await LockStatusAsync(
             db.Database.SqlQuery<string>($"SELECT status AS \"Value\" FROM tenants WHERE id = {owner.Id} FOR SHARE"), ct);
-        if (CheckChangeable(Enum.Parse<TenantStatus>(ownerStatus!, ignoreCase: true)) is { } lockedStateError)
+        if (CheckChangeable(owner, Enum.Parse<TenantStatus>(ownerStatus!, ignoreCase: true)) is { } lockedStateError)
         {
             return lockedStateError;
         }
@@ -280,7 +280,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return ServiceError.NotFound();
         }
 
-        if (CheckChangeable(owner!.Status) is { } stateError)
+        if (CheckChangeable(owner!) is { } stateError)
         {
             return stateError;
         }
@@ -320,7 +320,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return request;
         }
 
-        tenants.AddAudit(actor, owner.Id, AuditActions.PaymentRequestUpdated, new
+        tenants.AddAudit(actor, owner!.Id, AuditActions.PaymentRequestUpdated, new
         {
             PaymentRequestId = request.Id,
             request.ExternalId,
@@ -360,7 +360,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return ServiceError.NotFound();
         }
 
-        if (CheckChangeable(owner!.Status) is { } stateError)
+        if (CheckChangeable(owner!) is { } stateError)
         {
             return stateError;
         }
@@ -399,7 +399,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         request.UpdatedAt = now;
         request.Version++;
         await ledger.AddChangeAsync(request, before, PaymentChangeCause.Cancelled, null, null, null, actor, ct);
-        tenants.AddAudit(actor, owner.Id, AuditActions.PaymentRequestCancelled, new
+        tenants.AddAudit(actor, owner!.Id, AuditActions.PaymentRequestCancelled, new
         {
             PaymentRequestId = request.Id,
             request.ExternalId,
@@ -449,7 +449,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
 
         return owner.Status switch
         {
-            TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot receive payments."),
+            TenantStatus.Deleted => TenantService.TenantDeleted(owner, "The tenant is deleted and cannot receive payments."),
             TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended and cannot receive payments."),
             _ when found.Request.Status == PaymentRequestStatus.Cancelled => ServiceError.Conflict(
                 "payment_request_cancelled", "The payment request is cancelled; no new payment instructions are issued for it."),
@@ -553,9 +553,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
     }
 
     /// <summary>A deleted tenant's requests are history; a suspended child's can be inspected by its parent but not changed.</summary>
-    private static ServiceError? CheckChangeable(TenantStatus status) => status switch
+    private static ServiceError? CheckChangeable(Tenant owner, TenantStatus? lockedStatus = null) => (lockedStatus ?? owner.Status) switch
     {
-        TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot be changed."),
+        TenantStatus.Deleted => TenantService.TenantDeleted(owner),
         TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended; reactivate it before changing its payment requests."),
         _ => null,
     };

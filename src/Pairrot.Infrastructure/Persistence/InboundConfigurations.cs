@@ -146,7 +146,11 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
                 + "OR (content_state = 'pending' AND content_sha256 IS NULL AND content_stored_at IS NULL) "
                 + "OR (content_state = 'failed' AND content_sha256 IS NULL AND content_stored_at IS NULL AND fetch_error_code IS NOT NULL) "
                 + "OR (content_state = 'skipped' AND content_sha256 IS NULL AND content_stored_at IS NULL AND text_body IS NULL "
-                + "AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL)");
+                + "AND html_body IS NULL AND headers IS NULL AND attachments IS NULL AND raw_provider_content IS NULL) "
+                + "OR (content_state IN ('expired', 'erased') AND text_body IS NULL AND html_body IS NULL AND headers IS NULL "
+                + "AND attachments IS NULL AND raw_provider_content IS NULL AND content_recipients IS NULL AND subject IS NULL "
+                + "AND header_from IS NULL AND envelope_sender IS NULL AND sender_domain IS NULL AND transport_metadata IS NULL "
+                + "AND authentication_raw IS NULL AND fetch_error_message IS NULL)");
             t.HasCheckConstraint(
                 "inbound_messages_sender_class_valid",
                 $"sender_class IS NULL OR sender_class IN ({SnakeCaseEnum<InboundSenderClass>.SqlList})");
@@ -155,7 +159,7 @@ internal sealed class InboundMessageConfiguration : IEntityTypeConfiguration<Inb
             t.HasCheckConstraint(
                 "inbound_messages_foreign_minimal",
                 "(sender_class IS DISTINCT FROM 'foreign' AND hold_reason IS DISTINCT FROM 'address_paused') "
-                + "OR (content_state = 'skipped' AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL "
+                + "OR (content_state IN ('skipped', 'expired', 'erased') AND subject IS NULL AND header_from IS NULL AND envelope_sender IS NULL "
                 + "AND transport_metadata IS NULL AND retain_until IS NOT NULL)");
             t.HasCheckConstraint("inbound_messages_content_digest_format", "content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'");
             t.HasCheckConstraint(
@@ -309,7 +313,9 @@ internal sealed class ForwardingSourceConfiguration : IEntityTypeConfiguration<F
     {
         builder.ToTable("forwarding_sources", t =>
         {
-            t.HasCheckConstraint("forwarding_sources_address_normalized", "address = lower(btrim(address)) AND address LIKE '_%@_%'");
+            t.HasCheckConstraint(
+                "forwarding_sources_address_normalized",
+                "(address = lower(btrim(address)) AND address LIKE '_%@_%') OR (address IS NULL AND erased_at IS NOT NULL)");
             t.HasCheckConstraint("forwarding_sources_state_valid", $"state IN ({SnakeCaseEnum<ForwardingSourceState>.SqlList})");
             t.HasCheckConstraint(
                 "forwarding_sources_state_consistent",

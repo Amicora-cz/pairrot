@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Pairrot.Core.Tenants;
 using Pairrot.Core.Webhooks;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
 
@@ -134,6 +135,16 @@ public class WebhookDeliveryWorker(
         var ev = await db.WebhookEvents.AsNoTracking().SingleAsync(e => e.Id == delivery.EventId, ct);
         var now = jobs.Now();
 
+        // Feature 014: nothing of an erased owner, or to an erased subscriber, is sent again.
+        if (ev.Body is null || await DataBarrier.IsClosedAsync(db, delivery.OwnerTenantId, ct)
+            || await DataBarrier.IsClosedAsync(db, endpoint.TenantId, ct))
+        {
+            Finish(delivery, WebhookDeliveryState.Abandoned, now, null, null, "abandoned");
+            delivery.AbandonReason = ErasureRules.AbandonReason;
+            await SaveAsync(transaction, ct);
+            return null;
+        }
+
         if (endpoint.State == WebhookEndpointState.Paused && !ev.Synthetic)
         {
             // Paused after the claim: back to the backlog without consuming an attempt.
@@ -173,7 +184,7 @@ public class WebhookDeliveryWorker(
             Generation = delivery.Generation,
             AttemptNumber = delivery.AttemptInGeneration,
             DestinationRevision = delivery.DestinationRevision,
-            Url = url,
+            Url = url!,
             KeyIds = string.Join(' ', signing.Select(k => k.KeyId)),
             SignedTimestamp = timestamp,
             StartedAt = now,
@@ -185,7 +196,7 @@ public class WebhookDeliveryWorker(
         var body = Encoding.UTF8.GetBytes(ev.Body);
         var id = delivery.Id.ToString();
         var stamp = timestamp.ToString(CultureInfo.InvariantCulture);
-        return new PreparedSend(attempt.Id, new WebhookHttpRequest(new Uri(url),
+        return new PreparedSend(attempt.Id, new WebhookHttpRequest(new Uri(url!),
         [
             new("Pairrot-Webhook-Id", id),
             new("Pairrot-Webhook-Timestamp", stamp),
@@ -207,13 +218,19 @@ public class WebhookDeliveryWorker(
             ? outcome == WebhookAttemptOutcome.Delivered ? null : s is >= 300 and < 400 ? "redirect_not_followed" : $"http_{s}"
             : response.ErrorCode;
 
+        // Feature 014: a late result for an erased party records status and timing, never response text.
+        var parties = await db.WebhookDeliveries.AsNoTracking().Where(d => d.Id == deliveryId)
+            .Select(d => new { d.OwnerTenantId, d.SubscriberTenantId }).SingleAsync(ct);
+        var erased = await DataBarrier.IsClosedAsync(db, parties.OwnerTenantId, ct)
+            || await DataBarrier.IsClosedAsync(db, parties.SubscriberTenantId, ct);
+
         // The attempt is history and is completed even when the lease was lost meanwhile.
         if (attempt.Outcome == WebhookAttemptOutcome.InProgress && attempt.LeaseToken == token)
         {
             attempt.Outcome = outcome;
             attempt.HttpStatus = response.Status;
             attempt.ErrorCode = code;
-            attempt.ResponseExcerpt = response.Excerpt ?? response.ErrorMessage;
+            attempt.ResponseExcerpt = erased ? null : response.Excerpt ?? response.ErrorMessage;
             attempt.CompletedAt = now;
             attempt.DurationMs = (int)Math.Min(int.MaxValue, Math.Max(0, (now - started).TotalMilliseconds));
         }
@@ -227,7 +244,7 @@ public class WebhookDeliveryWorker(
         }
 
         delivery.LastHttpStatus = response.Status;
-        var message = response.ErrorMessage ?? (response.Status is { } httpStatus ? $"The receiver answered HTTP {httpStatus}." : null);
+        var message = erased ? null : response.ErrorMessage ?? (response.Status is { } httpStatus ? $"The receiver answered HTTP {httpStatus}." : null);
         if (outcome == WebhookAttemptOutcome.Delivered)
         {
             Finish(delivery, WebhookDeliveryState.Delivered, now, null, null, "delivered");

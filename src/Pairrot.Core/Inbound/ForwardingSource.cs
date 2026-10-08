@@ -12,14 +12,17 @@ public class ForwardingSource
     public Guid TenantId { get; set; }
     public Guid BankConnectionId { get; set; }
 
-    /// <summary>Normalized lowercase address.</summary>
-    public required string Address { get; set; }
+    /// <summary>Normalized lowercase address; <c>null</c> once erased (Feature 014).</summary>
+    public string? Address { get; set; }
 
     public ForwardingSourceState State { get; set; } = ForwardingSourceState.Active;
 
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? RemovedAt { get; set; }
+
+    /// <summary>Feature 014: the mailbox address was erased with its tenant.</summary>
+    public DateTimeOffset? ErasedAt { get; set; }
 }
 
 public enum ForwardingSourceState

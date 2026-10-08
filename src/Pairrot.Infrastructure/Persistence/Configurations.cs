@@ -22,6 +22,12 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
             t.HasCheckConstraint(
                 "tenants_deletion_consistent",
                 "(status = 'deleted' AND deleted_at IS NOT NULL) OR (status <> 'deleted' AND deleted_at IS NULL)");
+
+            // Feature 014: only a deleted tenant is erased, and it is erased only after the request.
+            t.HasCheckConstraint(
+                "tenants_erasure_consistent",
+                "(erasure_requested_at IS NULL AND erased_at IS NULL) "
+                + "OR (erasure_requested_at IS NOT NULL AND status = 'deleted' AND (erased_at IS NULL OR erased_at >= erasure_requested_at))");
         });
 
         builder.HasKey(t => t.Id);
@@ -120,5 +126,39 @@ internal sealed class TenantAuditEventConfiguration : IEntityTypeConfiguration<T
 
         builder.HasIndex(e => new { e.TargetTenantId, e.CreatedAt, e.Id })
             .HasDatabaseName("tenant_audit_events_target_idx");
+    }
+}
+
+internal sealed class TenantErasureConfiguration : IEntityTypeConfiguration<TenantErasure>
+{
+    public const string TenantUniqueIndex = "tenant_erasures_tenant_unique";
+
+    public void Configure(EntityTypeBuilder<TenantErasure> builder)
+    {
+        builder.ToTable("tenant_erasures", t =>
+        {
+            t.HasCheckConstraint("tenant_erasures_state_valid", $"state IN ({SnakeCaseEnum<TenantErasureState>.SqlList})");
+            t.HasCheckConstraint(
+                "tenant_erasures_completion_consistent",
+                "(state = 'done' AND completed_at IS NOT NULL AND reason IS NULL) OR (state <> 'done' AND completed_at IS NULL)");
+            t.HasCheckConstraint("tenant_erasures_counts_object", "jsonb_typeof(counts) = 'object'");
+            t.HasCheckConstraint("tenant_erasures_limitations_array", "jsonb_typeof(limitations) = 'array'");
+            t.HasCheckConstraint(
+                "tenant_erasures_key_digest_format", "idempotency_key_sha256 IS NULL OR idempotency_key_sha256 ~ '^[0-9a-f]{64}$'");
+        });
+
+        builder.HasKey(e => e.Id);
+        builder.Property(e => e.Id).ValueGeneratedNever();
+        builder.Property(e => e.State).HasConversion<SnakeCaseEnumConverter<TenantErasureState>>().HasMaxLength(20);
+        builder.Property(e => e.RequestedBy).HasMaxLength(200);
+        builder.Property(e => e.Reason).HasMaxLength(Core.Matching.MatchingRules.MaxReasonLength);
+        builder.Property(e => e.IdempotencyKeySha256).HasMaxLength(64);
+        builder.Property(e => e.Counts).HasColumnType("jsonb");
+        builder.Property(e => e.Limitations).HasColumnType("jsonb");
+
+        builder.HasOne<Tenant>().WithMany().HasForeignKey(e => e.TenantId).OnDelete(DeleteBehavior.Restrict);
+
+        // One erasure per tenant: a second request returns the first.
+        builder.HasIndex(e => e.TenantId).IsUnique().HasDatabaseName(TenantUniqueIndex);
     }
 }

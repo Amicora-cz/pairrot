@@ -195,6 +195,7 @@ function RequestState({ request: r }: { request: PaymentRequest }) {
     <>
       <PaymentStatusBadge status={r.status} />
       {r.is_overdue && <span className="badge badge-overdue">overdue</span>}
+      {r.erased_at && <span className="badge badge-deleted">erased</span>}
     </>
   )
 }

@@ -60,4 +60,7 @@ public static class BackgroundJobTypes
 
     /// <summary>Match the waiting transactions of a newly created payment request; the target is the request.</summary>
     public const string MatchPaymentRequest = "match_payment_request";
+
+    /// <summary>Feature 014: erase a tenant in batches; the target is the tenant.</summary>
+    public const string EraseTenant = "erase_tenant";
 }

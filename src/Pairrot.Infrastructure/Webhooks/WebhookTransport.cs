@@ -80,20 +80,14 @@ public class WebhookRouter(PairrotDbContext db)
     public async Task RouteAsync(PaymentChange change, CancellationToken ct)
     {
         var environment = WebhookEvents.EnvironmentOf(change);
-        var body = WebhookEvents.PaymentBody(change);
-        db.WebhookEvents.Add(new WebhookEvent
+
+        // Feature 014: an erased owner's change gets an event without a body and nothing to send.
+        var erased = await Erasure.DataBarrier.IsClosedAsync(db, change.TenantId, ct);
+        db.WebhookEvents.Add(WebhookEvents.ForChange(change, erased));
+        if (erased)
         {
-            Id = change.Id,
-            Type = WebhookEvents.PaymentRequestUpdated,
-            TenantId = change.TenantId,
-            PaymentChangeId = change.Id,
-            PaymentRequestId = change.PaymentRequestId,
-            Sequence = change.Sequence,
-            Environment = environment,
-            Body = body,
-            BodySha256 = WebhookEvents.Sha256(body),
-            CreatedAt = change.CreatedAt,
-        });
+            return;
+        }
 
         var owner = await db.Tenants.AsNoTracking()
             .Where(t => t.Id == change.TenantId)

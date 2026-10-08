@@ -137,8 +137,8 @@ public class ManualCommandReceipt
 
     public int ResponseStatus { get; set; }
 
-    /// <summary>The JSON response returned for the first, committed execution.</summary>
-    public required string ResponseBody { get; set; }
+    /// <summary>The JSON response returned for the first, committed execution; <c>null</c> once erased (Feature 014).</summary>
+    public string? ResponseBody { get; set; }
 
     /// <summary>JSON object of the resources the command created or changed.</summary>
     public string ResourceIds { get; set; } = "{}";

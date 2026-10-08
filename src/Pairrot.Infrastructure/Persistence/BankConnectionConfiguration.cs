@@ -44,7 +44,10 @@ internal sealed class BankConnectionConfiguration : IEntityTypeConfiguration<Ban
     {
         builder.ToTable("bank_connections", t =>
         {
-            t.HasCheckConstraint("bank_connections_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+            t.HasCheckConstraint(
+                "bank_connections_iban_format",
+                $"iban ~ '^CZ[0-9]{{22}}$' OR (erased_at IS NOT NULL AND iban ~ '{ErasureRules.MaskedIbanPattern}')");
+            t.HasCheckConstraint("bank_connections_erased_archived", "erased_at IS NULL OR (status = 'archived' AND label IS NULL)");
             t.HasCheckConstraint("bank_connections_account_number_not_blank", "btrim(account_number) <> ''");
             t.HasCheckConstraint("bank_connections_currency_valid", "currency = 'CZK'");
             t.HasCheckConstraint("bank_connections_label_not_blank", "label IS NULL OR btrim(label) <> ''");

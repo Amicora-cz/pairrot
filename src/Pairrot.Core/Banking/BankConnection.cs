@@ -53,6 +53,9 @@ public class BankConnection
 
     /// <summary>Why the connection is archived; <c>null</c> while it is active.</summary>
     public BankConnectionArchivedReason? ArchivedReason { get; set; }
+
+    /// <summary>Feature 014: the label is gone and the account snapshots are masked; it can never be restored.</summary>
+    public DateTimeOffset? ErasedAt { get; set; }
 }
 
 public enum BankConnectionStatus

@@ -58,6 +58,9 @@ public class MessageParseRun
 
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset CompletedAt { get; set; }
+
+    /// <summary>Feature 014: the candidate, trust evidence, and reason texts were purged (retention or erasure).</summary>
+    public DateTimeOffset? PurgedAt { get; set; }
 }
 
 /// <summary>
@@ -163,6 +166,12 @@ public class IncomingTransaction
 
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>Feature 014: the sender fields and reason texts were purged (retention or erasure); the financial facts remain.</summary>
+    public DateTimeOffset? PayerDataPurgedAt { get; set; }
+
+    /// <summary>Feature 014: also the free-text handling reason was erased with the tenant.</summary>
+    public DateTimeOffset? ErasedAt { get; set; }
 }
 
 public enum TransactionHandling

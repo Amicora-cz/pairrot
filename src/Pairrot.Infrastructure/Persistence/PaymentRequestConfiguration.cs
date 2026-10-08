@@ -24,7 +24,13 @@ internal sealed class PaymentRequestConfiguration : IEntityTypeConfiguration<Pay
             t.HasCheckConstraint("payment_requests_amount_range",
                 $"amount BETWEEN {SpaydPayment.MinAmount} AND {SpaydPayment.MaxAmount}");
             t.HasCheckConstraint("payment_requests_currency_valid", "currency = 'CZK'");
-            t.HasCheckConstraint("payment_requests_iban_format", "iban ~ '^CZ[0-9]{22}$'");
+            t.HasCheckConstraint(
+                "payment_requests_iban_format",
+                $"iban ~ '^CZ[0-9]{{22}}$' OR (erased_at IS NOT NULL AND iban ~ '{ErasureRules.MaskedIbanPattern}')");
+            t.HasCheckConstraint(
+                "payment_requests_erasure_consistent",
+                $"(erased_at IS NULL AND qr_payload IS NOT NULL) OR (erased_at IS NOT NULL AND qr_payload IS NULL "
+                + $"AND message IS NULL AND description IS NULL AND cancellation_reason IS NULL AND external_id LIKE '{ErasureRules.TombstonePrefix}%')");
             t.HasCheckConstraint("payment_requests_variable_symbol_format", "variable_symbol ~ '^[0-9]{1,10}$'");
             t.HasCheckConstraint("payment_requests_variable_symbol_key_format", "variable_symbol_key ~ '^(0|[1-9][0-9]{0,9})$'");
             t.HasCheckConstraint("payment_requests_status_valid", $"status IN ({SnakeCaseEnum<PaymentRequestStatus>.SqlList})");

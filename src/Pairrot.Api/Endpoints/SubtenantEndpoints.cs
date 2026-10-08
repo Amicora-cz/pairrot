@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Pairrot.Api.Auth;
 using Pairrot.Api.Http;
 using Pairrot.Core.Tenants;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Tenants;
 
 namespace Pairrot.Api.Endpoints;
@@ -15,6 +16,7 @@ public static class SubtenantEndpoints
     private static readonly HashSet<string> CreateFields = ["external_id", "name", "contact_email"];
     private static readonly HashSet<string> UpdateFields = ["name", "contact_email", "status"];
     private static readonly HashSet<string> IssueKeyFields = ["label"];
+    private static readonly HashSet<string> EraseFields = ["reason"];
 
     public static void MapSubtenantEndpoints(this IEndpointRouteBuilder app)
     {
@@ -27,6 +29,7 @@ public static class SubtenantEndpoints
         group.MapGet("/{id:guid}", GetAsync);
         group.MapPatch("/{id:guid}", UpdateAsync);
         group.MapDelete("/{id:guid}", DeleteAsync);
+        group.MapPost("/{id:guid}/erase", EraseAsync);
         group.MapGet("/{id:guid}/api-keys", ListKeysAsync);
         group.MapPost("/{id:guid}/api-keys", IssueKeyAsync);
         group.MapDelete("/{id:guid}/api-keys/{keyId:guid}", RevokeKeyAsync);
@@ -92,13 +95,49 @@ public static class SubtenantEndpoints
         string? externalId = query.TryGetValue("external_id", out var externalIdValue) ? externalIdValue.ToString() : null;
 
         var page = await tenants.ListSubtenantsAsync(user.GetTenantId(), externalId, status, limit, cursor, ct);
-        return Results.Ok(new ListResponse<TenantResponse>(page.Items.Select(TenantResponse.From).ToList(), page.NextCursor));
+        return Results.Ok(new ListResponse<TenantResponse>(page.Items.Select(t => TenantResponse.From(t)).ToList(), page.NextCursor));
     }
 
-    private static async Task<IResult> GetAsync(Guid id, ClaimsPrincipal user, TenantService tenants, CancellationToken ct) =>
+    private static async Task<IResult> GetAsync(
+        Guid id, ClaimsPrincipal user, TenantService tenants, TenantErasureService erasures, CancellationToken ct) =>
         await tenants.FindSubtenantAsync(user.GetTenantId(), id, ct) is { } child
-            ? Results.Ok(TenantResponse.From(child))
+            ? Results.Ok(TenantResponse.From(child, await erasures.FindAsync(child.Id, ct)))
             : ApiErrors.NotFound();
+
+    /// <summary>
+    /// Feature 014: queues the erasure of a deleted child past the minimum age; <c>202</c> with the
+    /// child and its erasure. A repeat returns the current state with <c>Idempotent-Replayed: true</c>.
+    /// </summary>
+    private static async Task<IResult> EraseAsync(
+        Guid id, HttpContext http, ClaimsPrincipal user, TenantService tenants, TenantErasureService erasures, CancellationToken ct)
+    {
+        if (!MatchingEndpoints.TryCommand(http, user, "tenant.erase", out var command, out var error, id))
+        {
+            return error!;
+        }
+
+        var (body, bodyError) = await JsonBody.ReadAsync(http.Request, EraseFields);
+        if (body is null)
+        {
+            return bodyError!;
+        }
+
+        if (!body.TryGetString("reason", out var reason, out bodyError))
+        {
+            return bodyError!;
+        }
+
+        var result = await erasures.RequestForSubtenantAsync(
+            user.GetTenantId(), id, reason.Value, command!.IdempotencyKey, user.GetActor(), ct);
+        if (result.Error is { } failure)
+        {
+            return ApiErrors.From(failure);
+        }
+
+        var tenant = (await tenants.FindSubtenantAsync(user.GetTenantId(), id, ct))!;
+        http.Response.Headers["Idempotent-Replayed"] = result.Value!.Replayed ? "true" : "false";
+        return Results.Json(TenantResponse.From(tenant, result.Value.Erasure), statusCode: StatusCodes.Status202Accepted);
+    }
 
     private static async Task<IResult> UpdateAsync(
         Guid id, HttpRequest request, ClaimsPrincipal user, TenantService tenants, CancellationToken ct)

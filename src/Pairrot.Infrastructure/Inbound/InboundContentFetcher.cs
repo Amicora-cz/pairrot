@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Pairrot.Core.Inbound;
 using Pairrot.Core.Jobs;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
 using Pairrot.Infrastructure.Transactions;
@@ -19,6 +21,7 @@ public class InboundContentFetcher(
     InboundRouter router,
     InboundProviderRegistry providers,
     IEnumerable<IInboundContentSource> sources,
+    IOptions<RetentionOptions> retention,
     ILogger<InboundContentFetcher> logger) : IBackgroundJobHandler
 {
     public string Type => BackgroundJobTypes.FetchInboundContent;
@@ -39,6 +42,13 @@ public class InboundContentFetcher(
         {
             // Already stored (e.g. by an earlier attempt that committed); never store a second snapshot.
             await FinishAsync(lease, null, (job, _) => jobs.Succeed(job), ct);
+            return;
+        }
+
+        if (message.ContentState is InboundContentState.Erased or InboundContentState.Expired)
+        {
+            // Feature 014: purged content is never retrieved again.
+            await FinishAsync(lease, null, (job, _) => GoneFail(job, message.ContentState), ct);
             return;
         }
 
@@ -82,6 +92,33 @@ public class InboundContentFetcher(
             default:
                 await FailAsync(lease, "invalid_provider_response", result.Error ?? "The provider response is not the requested email.", ct);
                 break;
+        }
+    }
+
+    /// <summary>Whether the message's content must not be stored any more: erased owner, or past the payer-data limit.</summary>
+    private async Task<InboundContentState?> GoneAsync(InboundMessage message, CancellationToken ct)
+    {
+        if (message.ContentState == InboundContentState.Erased
+            || message.TenantId is { } owner && await DataBarrier.IsClosedAsync(db, owner, ct))
+        {
+            return InboundContentState.Erased;
+        }
+
+        return message.ContentState == InboundContentState.Expired
+            || retention.Value.Enabled && message.ReceivedAt < retention.Value.CutoffAt(jobs.Now())
+            ? InboundContentState.Expired
+            : null;
+    }
+
+    private void GoneFail(BackgroundJob job, InboundContentState state)
+    {
+        if (state == InboundContentState.Erased)
+        {
+            jobs.Fail(job, "content_erased", "The message's owner was erased; its content is not retrieved.");
+        }
+        else
+        {
+            jobs.Fail(job, "content_expired", "The message is older than the payer-data retention limit; its content is not retrieved.");
         }
     }
 
@@ -145,10 +182,28 @@ public class InboundContentFetcher(
     {
         var saved = await jobs.FinishAsync(lease, async job =>
         {
-            var message = messageId is { } id ? await db.InboundMessages.SingleOrDefaultAsync(m => m.Id == id, ct) : null;
+            // The row lock orders this result against a retention pass purging the same message.
+            var message = messageId is { } id
+                ? (await db.InboundMessages.FromSql($"SELECT *, xmin FROM inbound_messages WHERE id = {id} FOR UPDATE").ToListAsync(ct)).SingleOrDefault()
+                : null;
             if (messageId is not null && message is null)
             {
                 jobs.Fail(job, "message_not_found", "The inbound message does not exist.");
+                return;
+            }
+
+            if (message is not null && await GoneAsync(message, ct) is { } gone)
+            {
+                // Feature 014: the owner was erased or the payer data expired while this job ran.
+                // Neither the content nor a provider error is stored; only the tombstone remains.
+                if (message.ContentState is not (InboundContentState.Erased or InboundContentState.Expired))
+                {
+                    var address = await db.InboundAddresses.AsNoTracking()
+                        .Where(a => a.Id == message.InboundAddressId).Select(a => a.Address).SingleOrDefaultAsync(ct);
+                    InboundContent.Minimize(message, gone, address, jobs.Now());
+                }
+
+                GoneFail(job, gone);
                 return;
             }
 

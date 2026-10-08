@@ -369,7 +369,7 @@ public partial class ForwardingService(
 
     private static ServiceError? CheckOwner(Tenant owner) => owner.Status switch
     {
-        TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot be changed."),
+        TenantStatus.Deleted => TenantService.TenantDeleted(owner),
         TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended; reactivate it first."),
         _ => null,
     };

@@ -284,6 +284,29 @@ public static class WebhookEvents
         },
     }, Json);
 
+    /// <summary>
+    /// The event of a payment change. For an owner whose erasure was requested (Feature 014) only
+    /// the identity, the digest, and the erasure marker are kept: the body is never stored or sent.
+    /// </summary>
+    public static WebhookEvent ForChange(PaymentChange change, bool ownerErased)
+    {
+        var body = PaymentBody(change);
+        return new WebhookEvent
+        {
+            Id = change.Id,
+            Type = PaymentRequestUpdated,
+            TenantId = change.TenantId,
+            PaymentChangeId = change.Id,
+            PaymentRequestId = change.PaymentRequestId,
+            Sequence = change.Sequence,
+            Environment = EnvironmentOf(change),
+            Body = ownerErased ? null : body,
+            BodySha256 = Sha256(body),
+            CreatedAt = change.CreatedAt,
+            PayloadErasedAt = ownerErased ? change.CreatedAt : null,
+        };
+    }
+
     public static string TestBody(Guid eventId, Guid tenantId, DateTimeOffset createdAt) => JsonSerializer.Serialize(new
     {
         id = eventId,

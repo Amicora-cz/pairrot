@@ -151,9 +151,14 @@ public class IncomingTransactionService(PairrotDbContext db, TenantService tenan
             return ServiceError.NotFound();
         }
 
+        if (InboundFetchQueue.Purged(message.ContentState) is { } purged)
+        {
+            return purged;
+        }
+
         if (owner!.Status == TenantStatus.Deleted)
         {
-            return ServiceError.Conflict("tenant_deleted", "The tenant is deleted; its messages are history only.");
+            return TenantService.TenantDeleted(owner, "The tenant is deleted; its messages are history only.");
         }
 
         if (await ParseEligibility.HeldAsync(db, message, ct) is { } held)

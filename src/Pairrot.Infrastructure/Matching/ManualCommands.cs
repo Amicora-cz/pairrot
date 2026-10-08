@@ -44,6 +44,9 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
+    /// <summary>How erasure stores a key: the same digest the erasure job computes in SQL.</summary>
+    public static string ErasedKey(string key) => $"sha256:{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)))}";
+
     public static string Fingerprint(string action, params object?[] values) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new object?[] { "v1", action, values }))));
 
@@ -119,11 +122,18 @@ public class ManualCommands(PairrotDbContext db, PaymentLedger ledger)
 
     private async Task<ServiceResult<CommandOutcome>?> StoredAsync(Guid ownerId, CommandRequest command, CancellationToken ct)
     {
+        // Feature 014: erasure keeps only a digest of the key and no response; a retry is refused, never re-executed.
+        var digest = ErasedKey(command.IdempotencyKey);
         var receipt = await db.CommandReceipts.AsNoTracking()
-            .SingleOrDefaultAsync(r => r.TenantId == ownerId && r.IdempotencyKey == command.IdempotencyKey, ct);
+            .SingleOrDefaultAsync(r => r.TenantId == ownerId && (r.IdempotencyKey == command.IdempotencyKey || r.IdempotencyKey == digest), ct);
         if (receipt is null)
         {
             return null;
+        }
+
+        if (receipt.ResponseBody is null)
+        {
+            return TenantService.TenantErased();
         }
 
         return receipt.Action == command.Action && receipt.Fingerprint == command.Fingerprint

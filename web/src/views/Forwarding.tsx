@@ -192,7 +192,7 @@ function SourceRow({ path, source: s, readOnly, onChanged }: { path: string; sou
 
   return (
     <div className="row">
-      <code>{s.address}</code>
+      {s.address ? <code>{s.address}</code> : <span className="badge badge-deleted">erased</span>}
       <span className="muted">added {formatDate(s.created_at)}</span>
       {!readOnly && (
         <button

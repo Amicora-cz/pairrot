@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Pairrot.Core.Parsing;
 using Pairrot.Infrastructure.Banking;
+using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Inbound.Resend;
 using Pairrot.Infrastructure.Jobs;
@@ -140,6 +141,13 @@ public static class DependencyInjection
         services.AddScoped<WebhookDeliveryWorker>();
         services.AddScoped<WebhookMaintenance>();
         services.AddScoped<WebhookService>();
+
+        // Feature 014: tenant erasure and payer-data retention.
+        services.Configure<ErasureOptions>(configuration.GetSection(ErasureOptions.Section));
+        services.Configure<RetentionOptions>(configuration.GetSection(RetentionOptions.Section));
+        services.AddScoped<TenantErasureService>();
+        services.AddScoped<IBackgroundJobHandler, TenantErasureJob>();
+        services.AddScoped<PayerDataRetention>();
         return services;
     }
 
@@ -155,6 +163,7 @@ public static class DependencyInjection
             services.AddHostedService<InboundRetentionScheduler>();
             services.AddHostedService<MatchingScheduler>();
             services.AddHostedService<WebhookDispatcher>();
+            services.AddHostedService<PayerDataRetentionScheduler>();
         }
 
         return services;

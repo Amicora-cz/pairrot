@@ -152,7 +152,7 @@ export function Transactions({ prefix, owner, readOnly = false }: { prefix: stri
                   <td>{t.booked_on}</td>
                   <td>{formatMinorUnits(t.amount, t.currency)}</td>
                   <td>{t.variable_symbol ?? '—'}</td>
-                  <td>{[t.sender_name, t.sender_account].filter(Boolean).join(' ') || '—'}</td>
+                  <td>{[t.sender_name, t.sender_account].filter(Boolean).join(' ') || purgedSender(t)}</td>
                   <td>
                     <code>{accountOf(t.bank_connection_id)?.account_number ?? t.bank_connection_id}</code>
                   </td>
@@ -243,7 +243,7 @@ function TransactionDetail({
         <dt>Variable symbol</dt>
         <dd>{t.variable_symbol ?? 'none'}</dd>
         <dt>Sender</dt>
-        <dd>{[t.sender_name, t.sender_account].filter(Boolean).join(' ') || '—'}</dd>
+        <dd>{[t.sender_name, t.sender_account].filter(Boolean).join(' ') || purgedSender(t)}</dd>
         <dt>Message for recipient</dt>
         <dd>{t.message ?? '—'}</dd>
         <dt>Bank reference</dt>
@@ -288,4 +288,9 @@ function TransactionDetail({
       <MatchingPanel prefix={prefix} transaction={t} accountNumber={accountNumber} readOnly={readOnly} onChanged={onChanged} />
     </Section>
   )
+}
+
+/** Feature 14: an empty sender is unknown, or was purged with the tenant or by the retention limit. */
+function purgedSender(t: IncomingTransaction) {
+  return t.erased_at ? 'erased' : t.payer_data_purged_at ? 'purged (retention limit)' : '—'
 }

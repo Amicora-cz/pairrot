@@ -263,7 +263,7 @@ public static class PaymentRequestEndpoints
         }
 
         var request = result.Value!;
-        return Results.File(PaymentQrService.RenderPng(request.QrPayload), "image/png", $"payment-qr-{request.VariableSymbol}.png");
+        return Results.File(PaymentQrService.RenderPng(request.QrPayload!), "image/png", $"payment-qr-{request.VariableSymbol}.png");
     }
 
     /// <summary>Reads an optional ISO 8601 timestamp with an offset; <c>null</c> clears it.</summary>

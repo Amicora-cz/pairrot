@@ -13,6 +13,25 @@ export interface Tenant {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  /** Feature 14: when the erasure finished; the name and external_id are placeholders since. */
+  erased_at: string | null
+  /** Returned for a single subtenant once its erasure was requested. */
+  erasure?: Erasure
+}
+
+/** Feature 14: the background erasure of a deleted tenant's personal data. */
+export interface Erasure {
+  id: string
+  state: 'queued' | 'running' | 'done'
+  requested_at: string
+  completed_at: string | null
+  /** The technical actor, e.g. `api_key:…`; never a name. */
+  requested_by: string
+  job_id: string
+  /** Records changed per record type so far. */
+  counts: Record<string, number>
+  /** What Pairrot cannot undo, e.g. `sent_webhook_copies_not_recalled`. */
+  limitations: string[]
 }
 
 export interface Membership {
@@ -88,6 +107,8 @@ export interface BankConnection {
   archived_at: string | null
   /** Why the connection is archived; `null` while it is active. */
   archived_reason: 'user' | 'tenant_deleted' | 'operator' | null
+  /** Feature 14: erased with its tenant; the label is gone and the account is masked. */
+  erased_at: string | null
   /** Address assignment only: a test address was retired for a new live one. */
   address_replaced?: boolean
 }
@@ -121,7 +142,8 @@ export interface InboundMessage {
   /** Feature 8: who the delivery metadata says sent it; limits collection, not a trust decision. */
   sender_class: 'bank' | 'forwarding_confirmation' | 'tenant_forward' | 'foreign' | null
   content_mode: 'deferred' | 'inline'
-  content_state: 'pending' | 'available' | 'failed'
+  /** `expired` and `erased` (Feature 14) are terminal: the content was purged and is never retrieved again. */
+  content_state: 'pending' | 'available' | 'failed' | 'expired' | 'erased'
   header_from: string | null
   envelope_sender: string | null
   subject: string | null
@@ -369,6 +391,9 @@ export interface IncomingTransaction {
   matching: TransactionMatching | null
   created_at: string
   updated_at: string
+  /** Feature 14: the sender fields were purged (retention or erasure); amounts and symbols remain. */
+  payer_data_purged_at: string | null
+  erased_at: string | null
   /** Detail only. */
   sources?: { inbound_message_id: string; parse_run_id: string; linked_at: string }[]
 }
@@ -443,6 +468,8 @@ export interface PaymentRequest {
   cancelled_at: string | null
   /** Sent back in `If-Match` when editing or cancelling. */
   version: number
+  /** Feature 14: erased with its tenant; `external_id` is a tombstone and the free text is gone. */
+  erased_at: string | null
   /** Creation only. */
   replayed?: boolean
   /** Creation only, while the request is payable. */
@@ -577,9 +604,11 @@ export async function apiPng(path: string, body?: unknown): Promise<Blob> {
 /** Feature 8: a mailbox that forwards bank notifications, entered by the tenant and active at once. */
 export interface ForwardingSource {
   id: string
-  address: string
+  /** `null` once erased with the tenant. */
+  address: string | null
   state: 'active' | 'removed'
   created_at: string
+  erased_at: string | null
 }
 
 export type SetupStatus =
@@ -620,7 +649,8 @@ export type WebhookDeliveryState = 'pending' | 'running' | 'retry_wait' | 'deliv
 export interface WebhookEndpoint {
   id: string
   tenant_id: string
-  url: string
+  /** `null` once the endpoint was erased with its tenant. */
+  url: string | null
   scope: WebhookScope
   state: 'active' | 'paused'
   environment: 'live' | 'test'
@@ -649,7 +679,10 @@ export interface WebhookEvent {
   environment: 'live' | 'test'
   synthetic: boolean
   created_at: string
+  /** The exact JSON sent; `null` once erased with its owner (Feature 14), never rebuilt. */
   body: unknown
+  body_sha256: string
+  payload_erased_at: string | null
 }
 
 export interface WebhookDelivery {
@@ -681,7 +714,8 @@ export interface WebhookAttempt {
   generation: number
   attempt_number: number
   destination_revision: number
-  url: string
+  /** `null` once the endpoint was erased with its tenant. */
+  url: string | null
   key_ids: string
   outcome: 'in_progress' | 'delivered' | 'retryable_failure' | 'permanent_failure' | 'outcome_unknown'
   http_status: number | null
@@ -696,5 +730,5 @@ export interface WebhookDeliveryDetail {
   delivery: WebhookDelivery
   event: WebhookEvent
   attempts: WebhookAttempt[]
-  current_url: string
+  current_url: string | null
 }

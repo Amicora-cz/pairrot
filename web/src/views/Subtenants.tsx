@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type IssuedApiKey, type ListResponse, type Tenant, type TenantStatus } from '../api'
 import { ErrorText, SecretOnce, Section, StatusBadge } from '../components'
-import { formatDate, useAction } from '../util'
+import { formatDate, useAction, useIdempotencyKey, words } from '../util'
 import { KeyManager } from './ApiKeys'
 import { BankSettings } from './BankSettings'
 import { ExpectedPayments } from './ExpectedPayments'
@@ -104,6 +104,7 @@ export function Subtenants() {
                 </td>
                 <td>
                   <StatusBadge status={child.status} />
+                  {child.erased_at && <span className="badge badge-deleted">erased</span>}
                 </td>
                 <td>{child.configuration.contact_email ?? '—'}</td>
                 <td>{formatDate(child.created_at)}</td>
@@ -135,6 +136,80 @@ export function Subtenants() {
         />
       )}
     </>
+  )
+}
+
+/**
+ * Feature 14: a deleted child's personal data can be erased after the minimum wait. The financial
+ * history stays; caller references become tombstones, so reconcile anything that needs the
+ * original external IDs or webhook history first.
+ */
+function ErasureSection({ child, onChanged }: { child: Tenant; onChanged: (tenant: Tenant) => void }) {
+  const [current, setCurrent] = useState<Tenant>(child)
+  const [reason, setReason] = useState('')
+  const key = useIdempotencyKey()
+  const { busy, error, run } = useAction()
+  const erasure = current.erasure
+
+  const load = useCallback(async () => setCurrent(await api<Tenant>('GET', `/v1/subtenants/${child.id}`)), [child.id])
+
+  useEffect(() => {
+    void run(load)
+  }, [run, load])
+
+  return (
+    <Section title="Erasure of personal data">
+      {erasure ? (
+        <>
+          <p>
+            Erasure <strong>{erasure.state}</strong>, requested {formatDate(erasure.requested_at)} by <code>{erasure.requested_by}</code>
+            {erasure.completed_at && `, completed ${formatDate(erasure.completed_at)}`}.
+          </p>
+          {Object.keys(erasure.counts).length > 0 && (
+            <p className="muted">
+              {Object.entries(erasure.counts)
+                .map(([type, count]) => `${words(type)}: ${count}`)
+                .join(', ')}
+            </p>
+          )}
+          {erasure.limitations.includes('sent_webhook_copies_not_recalled') && (
+            <p className="muted">Webhook requests already sent to receivers cannot be recalled; their retention is up to the receiver.</p>
+          )}
+          {erasure.state !== 'done' && (
+            <button className="secondary" disabled={busy} onClick={() => void run(load)}>
+              Refresh
+            </button>
+          )}
+        </>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!confirm(`Erase the personal data of ${current.configuration.name}? This cannot be undone.`)) return
+            void run(async () => {
+              const result = await api<Tenant>('POST', `/v1/subtenants/${child.id}/erase`, { reason }, { idempotencyKey: key.current() })
+              key.reset()
+              setCurrent(result)
+              onChanged(result)
+            })
+          }}
+        >
+          <p className="muted">
+            Removes the name, contact, labels, mailboxes, stored e-mails, payer details, free-text reasons, caller references,
+            and webhook payloads. Amounts, symbols, statuses, and allocations stay. Finish any reconciliation that needs the
+            original external IDs or webhook history first.
+          </p>
+          <label>
+            Reason
+            <input value={reason} onChange={(e) => setReason(e.target.value)} required maxLength={500} />
+          </label>
+          <button type="submit" className="danger" disabled={busy || reason.trim() === ''}>
+            Erase
+          </button>
+        </form>
+      )}
+      <ErrorText error={error} />
+    </Section>
   )
 }
 
@@ -198,6 +273,7 @@ function ChildDetail({ child, onChanged, onDeleted }: { child: Tenant; onChanged
         </form>
         <ErrorText error={error} />
       </Section>
+      {deleted && <ErasureSection child={child} onChanged={onChanged} />}
       {!deleted && (
         <Section title="Subtenant API keys">
           <KeyManager basePath={`/v1/subtenants/${child.id}/api-keys`} purposes={['tenant']} />

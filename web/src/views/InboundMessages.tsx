@@ -15,7 +15,7 @@ import { formatDate, formatMinorUnits, useAction } from '../util'
 
 interface Filters {
   bank_connection_id: string
-  content_state: '' | 'pending' | 'available' | 'failed'
+  content_state: '' | 'pending' | 'available' | 'failed' | 'expired' | 'erased'
   hold_reason: string
 }
 
@@ -101,6 +101,8 @@ export function InboundMessages({ prefix, owner, readOnly = false }: { prefix: s
             <option value="pending">pending</option>
             <option value="available">available</option>
             <option value="failed">failed</option>
+            <option value="expired">expired</option>
+            <option value="erased">erased</option>
           </select>
           <select value={filters.hold_reason} onChange={(e) => setFilters({ ...filters, hold_reason: e.target.value })}>
             <option value="">held or not</option>
@@ -179,8 +181,10 @@ export function InboundMessages({ prefix, owner, readOnly = false }: { prefix: s
 function ContentState({ message: m }: { message: InboundMessage }) {
   return (
     <>
-      <span className={`badge badge-${m.content_state === 'failed' ? 'suspended' : m.content_state === 'available' ? 'active' : 'pending'}`}>
-        {m.content_state}
+      <span
+        className={`badge badge-${m.content_state === 'failed' ? 'suspended' : m.content_state === 'available' ? 'active' : m.content_state === 'erased' || m.content_state === 'expired' ? 'deleted' : 'pending'}`}
+      >
+        {m.content_state === 'erased' ? 'content erased' : m.content_state === 'expired' ? 'content expired' : m.content_state}
       </span>
       {m.hold_reason && <span className="badge badge-suspended">held</span>}
       {m.source_kind === 'fixture' && <span className="badge">fixture</span>}
@@ -317,6 +321,12 @@ function MessageDetail({ path, readOnly, onChanged }: { path: string; readOnly: 
       {notice && <p className="muted">{notice}</p>}
       <ErrorText error={error} />
 
+      {message.content_state === 'erased' && (
+        <p className="muted">The content was erased with the tenant. Only routing facts remain; the financial records are kept.</p>
+      )}
+      {message.content_state === 'expired' && (
+        <p className="muted">The content was purged by the payer-data retention limit. The financial records are kept.</p>
+      )}
       {message.content_state === 'available' && <ParsingView path={path} readOnly={readOnly} onChanged={() => void run(load)} />}
 
       {source && <SourceView source={source} />}

@@ -15,6 +15,8 @@ namespace Pairrot.Api.Http;
 /// <param name="Evidence"><c>live</c>, <c>test</c>, or <c>fixture</c>.</param>
 /// <param name="HandlingState"><c>unallocated</c>, <c>allocated</c>, <c>ignored</c>, <c>rejected</c>, or <c>duplicate</c>.</param>
 /// <param name="Version">Send it as <c>expected_transaction_version</c> / <c>expected_version</c> in manual writes.</param>
+/// <param name="PayerDataPurgedAt">Feature 014: when the sender fields were purged (retention or erasure); the financial facts remain.</param>
+/// <param name="ErasedAt">Feature 014: when the transaction was erased with its tenant.</param>
 public sealed record IncomingTransactionResponse(
     Guid Id,
     Guid TenantId,
@@ -41,6 +43,8 @@ public sealed record IncomingTransactionResponse(
     TransactionMatchingResponse? Matching,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    DateTimeOffset? PayerDataPurgedAt,
+    DateTimeOffset? ErasedAt,
     IReadOnlyList<TransactionSourceResponse>? Sources = null)
 {
     public static IncomingTransactionResponse From(TransactionView view, IReadOnlyList<TransactionSource>? sources = null) =>
@@ -73,6 +77,8 @@ public sealed record IncomingTransactionResponse(
         matching is null ? null : TransactionMatchingResponse.From(t, matching),
         t.CreatedAt,
         t.UpdatedAt,
+        t.PayerDataPurgedAt,
+        t.ErasedAt,
         sources?.Select(s => new TransactionSourceResponse(s.InboundMessageId, s.ParseRunId, s.BankConnectionId, s.CreatedAt)).ToList());
 
     public static string EvidenceOf(InboundSourceKind kind, InboundEnvironment environment) =>

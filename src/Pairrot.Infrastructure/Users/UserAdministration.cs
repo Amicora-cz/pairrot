@@ -78,7 +78,7 @@ public class UserAdministration(
 
         if (tenant!.Status == TenantStatus.Deleted)
         {
-            return ServiceError.Conflict("tenant_deleted", "The tenant is deleted.");
+            return TenantService.TenantDeleted(tenant, "The tenant is deleted.");
         }
 
         var now = tenants.Now();

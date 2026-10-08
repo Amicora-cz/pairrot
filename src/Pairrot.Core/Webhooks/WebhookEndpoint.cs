@@ -20,8 +20,8 @@ public class WebhookEndpoint
     /// <summary>The current destination; incremented on every URL change.</summary>
     public int DestinationRevision { get; set; } = 1;
 
-    /// <summary>The current revision's URL, for reading; the revision rows keep every URL used.</summary>
-    public required string Url { get; set; }
+    /// <summary>The current revision's URL, for reading; the revision rows keep every URL used. <c>null</c> once erased.</summary>
+    public string? Url { get; set; }
 
     public DateTimeOffset? LastSuccessAt { get; set; }
     public DateTimeOffset? LastTestAcceptedAt { get; set; }
@@ -30,6 +30,9 @@ public class WebhookEndpoint
 
     /// <summary>Exposed as the ETag; incremented on every configuration change.</summary>
     public int Version { get; set; } = 1;
+
+    /// <summary>Feature 014: disabled for good with its erased tenant; the URL and the secrets are gone.</summary>
+    public DateTimeOffset? ErasedAt { get; set; }
 }
 
 public enum WebhookScope
@@ -50,7 +53,10 @@ public class WebhookDestinationRevision
     public Guid Id { get; set; }
     public Guid EndpointId { get; set; }
     public int Revision { get; set; }
-    public required string Url { get; set; }
+
+    /// <summary><c>null</c> once the endpoint's tenant was erased.</summary>
+    public string? Url { get; set; }
+
     public required string CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
@@ -107,9 +113,16 @@ public class WebhookEvent
     /// <summary>A <c>webhook.test</c> probe of one endpoint; never a payment change.</summary>
     public bool Synthetic { get; set; }
 
-    public required string Body { get; set; }
+    /// <summary>The exact bytes sent; <c>null</c> once the payment owner was erased. Never rebuilt.</summary>
+    public string? Body { get; set; }
+
+    /// <summary>The digest of the original body; kept after erasure.</summary>
     public required string BodySha256 { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>Feature 014: the body was purged with its owner; the event cannot be sent again.</summary>
+    public DateTimeOffset? PayloadErasedAt { get; set; }
 }
 
 /// <summary>
@@ -185,7 +198,9 @@ public class WebhookDeliveryAttempt
     public int AttemptNumber { get; set; }
 
     public int DestinationRevision { get; set; }
-    public required string Url { get; set; }
+
+    /// <summary><c>null</c> once the endpoint's tenant was erased.</summary>
+    public string? Url { get; set; }
 
     /// <summary>The key IDs that signed it, space separated.</summary>
     public required string KeyIds { get; set; }

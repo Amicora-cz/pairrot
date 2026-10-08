@@ -203,6 +203,7 @@ function ConnectionCard({
             <dd>
               {formatDate(c.archived_at)}
               {c.archived_reason && `, ${ARCHIVED_REASONS[c.archived_reason]}`}
+              {c.erased_at && <span className="badge badge-deleted">erased</span>}
             </dd>
           </>
         )}

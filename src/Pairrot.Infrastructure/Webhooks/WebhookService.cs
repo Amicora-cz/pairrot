@@ -26,7 +26,8 @@ public sealed record EndpointView(WebhookEndpoint Endpoint, IReadOnlyList<Webhoo
 /// <param name="Secret">The <c>pwhsec_</c> secret, shown only in the first response.</param>
 public sealed record SecretReveal(EndpointView Endpoint, string KeyId, string Secret);
 
-public sealed record DeliveryView(WebhookDelivery Delivery, WebhookEvent Event, IReadOnlyList<WebhookDeliveryAttempt> Attempts, string CurrentUrl);
+/// <param name="CurrentUrl"><c>null</c> once the endpoint was erased (Feature 014).</param>
+public sealed record DeliveryView(WebhookDelivery Delivery, WebhookEvent Event, IReadOnlyList<WebhookDeliveryAttempt> Attempts, string? CurrentUrl);
 
 public sealed record EventFilter(Guid? OwnerTenantId = null, Guid? PaymentRequestId = null, DateTimeOffset? From = null, DateTimeOffset? To = null);
 
@@ -425,6 +426,12 @@ public class WebhookService(
         Func<DeliveryView, object> render, CancellationToken ct = default) =>
         await DeliveryCommandAsync(caller, deliveryId, expectedVersion, reason, command, render, async (delivery, endpoint, text) =>
         {
+            var ev = await db.WebhookEvents.AsNoTracking().SingleAsync(e => e.Id == delivery.EventId, ct);
+            if (ev.Body is null)
+            {
+                return (PayloadErased(), false);
+            }
+
             switch (delivery.State)
             {
                 case WebhookDeliveryState.Pending or WebhookDeliveryState.Running or WebhookDeliveryState.RetryWait:
@@ -441,7 +448,6 @@ public class WebhookService(
                     "The endpoint's URL changed since this delivery was queued; replay the event to the current destination."), false);
             }
 
-            var ev = await db.WebhookEvents.AsNoTracking().SingleAsync(e => e.Id == delivery.EventId, ct);
             if (await WebhookDeliveryWorker.HoldReasonAsync(db, delivery, endpoint, ev, ct) is { } hold)
             {
                 return (ServiceError.Conflict(hold, $"The delivery cannot be sent now ({hold})."), false);
@@ -528,6 +534,11 @@ public class WebhookService(
                     || (e.TenantId != owner.Id && !children.Contains(e.TenantId))))
             {
                 return ServiceError.NotFound("One or more events were not found in this endpoint's scope; nothing was queued.");
+            }
+
+            if (events.Any(e => e.Body is null))
+            {
+                return PayloadErased();
             }
 
             if (events.Any(e => e.Environment != endpoint.Environment))
@@ -803,10 +814,14 @@ public class WebhookService(
 
     private static ServiceError? Inactive(Tenant owner) => owner.Status switch
     {
-        TenantStatus.Deleted => ServiceError.Conflict("tenant_deleted", "The tenant is deleted and cannot be changed."),
+        TenantStatus.Deleted => TenantService.TenantDeleted(owner),
         TenantStatus.Suspended => ServiceError.Conflict("tenant_not_active", "The tenant is suspended; reactivate it first."),
         _ => null,
     };
+
+    /// <summary>Feature 014: an erased owner's event is never rebuilt or sent again, also not to the parent.</summary>
+    private static ServiceError PayloadErased() =>
+        ServiceError.Conflict("event_payload_erased", "The event's payload was erased with its tenant; it cannot be sent again.");
 
     private static ServiceError Stale() => ServiceError.PreconditionFailed("The record has changed since it was read; reload it and try again.");
 

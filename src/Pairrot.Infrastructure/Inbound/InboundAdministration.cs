@@ -113,8 +113,16 @@ public class InboundAdministration(
                 HoldReason = message.HoldReason is { } hold ? SnakeCaseEnum<InboundHoldReason>.ToName(hold) : null,
             });
 
+            // Feature 014: an erased owner gets only the tombstone, like mail routed to it on arrival.
+            var erased = await db.Tenants.AnyAsync(t => t.Id == address.TenantId && t.ErasureRequestedAt != null, ct);
+            if (erased)
+            {
+                InboundContent.Minimize(message, InboundContentState.Erased, address.Address, jobs.Now());
+                await Erasure.PersonalDataPurge.ReceiptsAsync(db, [message.Id], ct);
+            }
+
             // Feature 008: the same collection rules as for mail that was routed on arrival.
-            var collect = await screening.ApplyAsync(message, address, null, jobs.Now(), ct);
+            var collect = !erased && await screening.ApplyAsync(message, address, null, jobs.Now(), ct);
             var existing = await db.BackgroundJobs.AsNoTracking()
                 .Where(j => j.Type == BackgroundJobTypes.FetchInboundContent && j.TargetId == message.Id)
                 .ToListAsync(ct);

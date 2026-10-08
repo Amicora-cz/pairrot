@@ -104,6 +104,11 @@ public class InboundMessageService(PairrotDbContext db, TenantService tenants, I
             return ServiceError.NotFound();
         }
 
+        if (InboundFetchQueue.Purged(message.ContentState) is { } purged)
+        {
+            return purged;
+        }
+
         if (message.ContentState != InboundContentState.Available)
         {
             return ServiceError.Conflict("content_not_available", "The source content has not been retrieved.");
@@ -131,10 +136,15 @@ public class InboundMessageService(PairrotDbContext db, TenantService tenants, I
             return ServiceError.NotFound();
         }
 
+        if (InboundFetchQueue.Purged(message.ContentState) is { } purged)
+        {
+            return purged;
+        }
+
         switch (owner!.Status)
         {
             case TenantStatus.Deleted:
-                return ServiceError.Conflict("tenant_deleted", "The tenant is deleted; its messages are history only.");
+                return TenantService.TenantDeleted(owner, "The tenant is deleted; its messages are history only.");
             case TenantStatus.Suspended:
                 return ServiceError.Conflict("tenant_not_active", "The tenant is suspended; reactivate it before retrying.");
         }
@@ -196,6 +206,11 @@ public class InboundFetchQueue(
                 "The content is already stored. Later processing uses the saved snapshot; it is never retrieved again.");
         }
 
+        if (Purged(message.ContentState) is { } purged)
+        {
+            return purged;
+        }
+
         // An instance this process does not know (e.g. the admin CLI without provider settings) is
         // left to the worker, which fails the job visibly if the instance is really missing.
         var instance = providers.Find(message.ProviderInstanceId);
@@ -230,6 +245,14 @@ public class InboundFetchQueue(
             return ServiceError.Conflict("concurrent_modification", "The message changed concurrently; retry the request.");
         }
     }
+
+    /// <summary>Feature 014: erased and expired content is terminal; nothing retrieves, shows, or parses it again.</summary>
+    internal static ServiceError? Purged(InboundContentState state) => state switch
+    {
+        InboundContentState.Erased => ServiceError.Conflict("content_erased", "The message's content was erased with its tenant."),
+        InboundContentState.Expired => ServiceError.Conflict("content_expired", "The message's content was purged by the payer-data retention limit."),
+        _ => null,
+    };
 
     internal static string RequesterOf(Actor actor) => actor switch
     {
