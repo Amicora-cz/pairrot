@@ -90,7 +90,7 @@ public sealed class PairrotFixture : IAsyncLifetime
             builder.UseSetting("Auth:LoginRateLimitPermits", loginRateLimitPermits.ToString(CultureInfo.InvariantCulture));
             // Webhook tests deliver explicitly through a fake receiver; this host's dispatcher (with
             // the real transport) must not claim their deliveries in between.
-            builder.UseSetting("Webhooks:PollInterval", "01:00:00");
+            builder.UseSetting("Webhooks:DispatcherEnabled", "false");
         });
 
     public const string Password = "correct horse battery staple";

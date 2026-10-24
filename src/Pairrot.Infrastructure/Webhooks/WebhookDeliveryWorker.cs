@@ -98,6 +98,19 @@ public class WebhookDeliveryWorker(
         return ids is [var id] ? (id, token) : null;
     }
 
+    /// <summary>When a delivery next becomes claimable: the earliest due time, or a lease expiry to recover.</summary>
+    public async Task<DateTimeOffset?> NextDueAtAsync(CancellationToken ct = default)
+    {
+        var next = await db.Database.SqlQuery<DateTimeOffset?>($"""
+            SELECT min(CASE WHEN d.state = 'running' THEN d.lease_expires_at ELSE d.due_at END) AS "Value"
+            FROM webhook_deliveries d
+            JOIN webhook_endpoints e ON e.id = d.endpoint_id
+            JOIN webhook_events ev ON ev.id = d.event_id
+            WHERE d.state = 'running' OR (d.state IN ('pending', 'retry_wait') AND (e.state = 'active' OR ev.synthetic))
+            """).ToListAsync(ct);
+        return next.SingleOrDefault();
+    }
+
     public async Task ProcessAsync(Guid deliveryId, Guid token, CancellationToken ct)
     {
         try
@@ -433,15 +446,20 @@ public static class WebhookHolds
     public const string SigningKeyUnavailable = "signing_key_unavailable";
 }
 
-/// <summary>Polls for due deliveries in the API process and runs maintenance periodically.</summary>
+/// <summary>
+/// Sends due deliveries in the API process and runs maintenance periodically. Between rounds it sleeps
+/// until the next due time, a saved delivery's signal, the next maintenance, or <see cref="WebhookOptions.PollInterval"/>.
+/// </summary>
 public sealed class WebhookDispatcher(
-    IServiceScopeFactory scopes, IOptions<WebhookOptions> options, ILogger<WebhookDispatcher> logger) : BackgroundService
+    IServiceScopeFactory scopes, WorkSignals signals, TimeProvider time, IOptions<WebhookOptions> options,
+    ILogger<WebhookDispatcher> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var nextMaintenance = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
+            TimeSpan wait;
             try
             {
                 using var scope = scopes.CreateScope();
@@ -451,7 +469,11 @@ public sealed class WebhookDispatcher(
                     nextMaintenance = DateTimeOffset.UtcNow + options.Value.MaintenanceInterval;
                 }
 
-                await scope.ServiceProvider.GetRequiredService<WebhookDeliveryWorker>().RunDueAsync(stoppingToken);
+                var worker = scope.ServiceProvider.GetRequiredService<WebhookDeliveryWorker>();
+                await worker.RunDueAsync(stoppingToken);
+                var max = nextMaintenance - DateTimeOffset.UtcNow;
+                max = max < options.Value.PollInterval ? max : options.Value.PollInterval;
+                wait = WorkerWait.Until(await worker.NextDueAtAsync(stoppingToken), time.GetUtcNow(), max);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -460,11 +482,12 @@ public sealed class WebhookDispatcher(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Webhook delivery round failed.");
+                wait = WorkerWait.AfterError < options.Value.PollInterval ? WorkerWait.AfterError : options.Value.PollInterval;
             }
 
             try
             {
-                await Task.Delay(options.Value.PollInterval, stoppingToken);
+                await signals.Webhooks.WaitAsync(wait, stoppingToken);
             }
             catch (OperationCanceledException)
             {

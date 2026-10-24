@@ -372,7 +372,9 @@ public sealed class InboundDiscoveryScheduler(
                 using var scope = scopes.CreateScope();
                 await scope.ServiceProvider.GetRequiredService<InboundDiscoveryService>().ScheduleAsync(startup, stoppingToken);
                 startup = false;
-                wait = options.Value.Interval < TimeSpan.FromMinutes(1) ? options.Value.Interval : TimeSpan.FromMinutes(1);
+                // A scheduled check makes the instance due again one interval after now, and only
+                // scheduling changes the due time, so nothing becomes due before the next round.
+                wait = options.Value.Interval;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

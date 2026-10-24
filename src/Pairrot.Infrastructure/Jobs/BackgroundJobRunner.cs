@@ -53,16 +53,44 @@ public class BackgroundJobRunner(BackgroundJobQueue queue, IEnumerable<IBackgrou
 
     public Task<JobLease?> ClaimAsync(CancellationToken ct = default) =>
         queue.ClaimNextAsync(_handlers.Keys, $"{ProcessOwner}:{Guid.NewGuid():N}", ct);
+
+    public Task<DateTimeOffset?> NextDueAtAsync(CancellationToken ct = default) => queue.NextDueAtAsync(_handlers.Keys, ct);
 }
 
-/// <summary>Polls the job table in the API process. Each round uses a fresh scope and database context.</summary>
+internal static class WorkerWait
+{
+    /// <summary>Waits shorter than this are rounded up, so a due row that cannot be claimed yet does not spin the loop.</summary>
+    public static readonly TimeSpan Minimum = TimeSpan.FromSeconds(1);
+
+    /// <summary>After a failed round (e.g. the database is unreachable).</summary>
+    public static readonly TimeSpan AfterError = TimeSpan.FromSeconds(30);
+
+    /// <summary>The time until <paramref name="dueAt"/>, between <see cref="Minimum"/> and <paramref name="max"/>.</summary>
+    public static TimeSpan Until(DateTimeOffset? dueAt, DateTimeOffset now, TimeSpan max)
+    {
+        if (dueAt is not { } due)
+        {
+            return max;
+        }
+
+        var wait = due - now;
+        return wait < Minimum ? Minimum : wait > max ? max : wait;
+    }
+}
+
+/// <summary>
+/// Runs due jobs in the API process, then sleeps until the next due time, a saved job's signal, or
+/// <see cref="BackgroundJobOptions.PollInterval"/>. Each round uses a fresh scope and database context.
+/// </summary>
 public sealed class BackgroundJobWorker(
-    IServiceScopeFactory scopes, IOptions<BackgroundJobOptions> options, ILogger<BackgroundJobWorker> logger) : BackgroundService
+    IServiceScopeFactory scopes, WorkSignals signals, TimeProvider time, IOptions<BackgroundJobOptions> options,
+    ILogger<BackgroundJobWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            TimeSpan wait;
             try
             {
                 bool ran;
@@ -72,6 +100,12 @@ public sealed class BackgroundJobWorker(
                     ran = await scope.ServiceProvider.GetRequiredService<BackgroundJobRunner>().RunOnceAsync(stoppingToken);
                 }
                 while (ran && !stoppingToken.IsCancellationRequested);
+
+                using (var scope = scopes.CreateScope())
+                {
+                    var next = await scope.ServiceProvider.GetRequiredService<BackgroundJobRunner>().NextDueAtAsync(stoppingToken);
+                    wait = WorkerWait.Until(next, time.GetUtcNow(), options.Value.PollInterval);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -81,11 +115,12 @@ public sealed class BackgroundJobWorker(
             {
                 // The job keeps its lease until it expires and is then resumed by the next round.
                 logger.LogError(ex, "Background job round failed.");
+                wait = WorkerWait.AfterError < options.Value.PollInterval ? WorkerWait.AfterError : options.Value.PollInterval;
             }
 
             try
             {
-                await Task.Delay(options.Value.PollInterval, stoppingToken);
+                await signals.Jobs.WaitAsync(wait, stoppingToken);
             }
             catch (OperationCanceledException)
             {

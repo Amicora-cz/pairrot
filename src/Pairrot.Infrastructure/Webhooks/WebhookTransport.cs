@@ -17,8 +17,14 @@ public sealed class WebhookOptions
     public const string Section = "Webhooks";
     public const string HttpClientName = "pairrot-webhooks";
 
-    /// <summary>How often due deliveries are looked for.</summary>
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(1);
+    /// <summary>Whether this process runs the dispatcher. Tests turn it off and deliver explicitly.</summary>
+    public bool DispatcherEnabled { get; set; } = true;
+
+    /// <summary>
+    /// The longest the dispatcher sleeps when no delivery is known to be due. Saved deliveries wake it
+    /// at once, and it otherwise wakes at the next due time or lease expiry, so this is only a safety net.
+    /// </summary>
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>How long a claimed delivery is reserved; longer than the 10-second request timeout.</summary>
     public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromSeconds(60);
@@ -27,7 +33,7 @@ public sealed class WebhookOptions
     public int MaxParallel { get; set; } = 8;
 
     /// <summary>How often expired keys are retired, held deliveries rechecked, and old changes materialized.</summary>
-    public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromMinutes(1);
+    public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>
     /// Development/Test only: <c>host:port</c> destinations that may use HTTP and a private address,

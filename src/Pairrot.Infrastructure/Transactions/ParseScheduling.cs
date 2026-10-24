@@ -17,7 +17,7 @@ public sealed class MessageParsingOptions
     public const string Section = "MessageParsing";
 
     /// <summary>How often eligible messages without any parse job are looked for (they are also queued at startup).</summary>
-    public TimeSpan SweepInterval { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan SweepInterval { get; set; } = TimeSpan.FromHours(1);
 }
 
 /// <summary>

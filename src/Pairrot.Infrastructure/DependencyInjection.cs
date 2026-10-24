@@ -32,10 +32,13 @@ public static class DependencyInjection
 
         // Feature 016: every save records the events of the transactions, review cases, and addresses it changes.
         services.AddSingleton<SubjectEventInterceptor>();
+        // Saved jobs and webhook deliveries wake their workers, which otherwise sleep until the next due time.
+        services.AddSingleton<WorkSignals>();
+        services.AddSingleton<WorkSignalInterceptor>();
         services.AddDbContext<PairrotDbContext>((sp, options) =>
         {
             ConfigureDbContext(options, connectionString);
-            options.AddInterceptors(sp.GetRequiredService<SubjectEventInterceptor>());
+            options.AddInterceptors(sp.GetRequiredService<SubjectEventInterceptor>(), sp.GetRequiredService<WorkSignalInterceptor>());
         });
         services.AddSingleton(TimeProvider.System);
 
@@ -169,7 +172,11 @@ public static class DependencyInjection
             services.AddHostedService<MessageParseScheduler>();
             services.AddHostedService<InboundRetentionScheduler>();
             services.AddHostedService<MatchingScheduler>();
-            services.AddHostedService<WebhookDispatcher>();
+            if (configuration.GetSection(WebhookOptions.Section).Get<WebhookOptions>()?.DispatcherEnabled ?? true)
+            {
+                services.AddHostedService<WebhookDispatcher>();
+            }
+
             services.AddHostedService<PayerDataRetentionScheduler>();
         }
 

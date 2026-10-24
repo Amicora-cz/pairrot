@@ -19,7 +19,7 @@ public sealed class MatchingOptions
     public const string Section = "Matching";
 
     /// <summary>How often eligible transactions without a matching job, and unrecorded review cases, are looked for.</summary>
-    public TimeSpan SweepInterval { get; set; } = TimeSpan.FromMinutes(10);
+    public TimeSpan SweepInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>
     /// Development and Test only: lets test-environment and fixture transactions be matched in an

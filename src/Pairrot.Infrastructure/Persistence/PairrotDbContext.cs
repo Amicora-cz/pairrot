@@ -62,6 +62,11 @@ public class PairrotDbContext(DbContextOptions<PairrotDbContext> options)
     /// </summary>
     internal Dictionary<Guid, string> EventCauses { get; } = [];
 
+    /// <summary>Work found in the save in progress, and work saved in an uncommitted transaction; see <see cref="Jobs.WorkSignalInterceptor"/>.</summary>
+    internal Jobs.PendingWork SavingWork { get; set; }
+
+    internal Jobs.PendingWork PendingWork { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

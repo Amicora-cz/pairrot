@@ -16,7 +16,11 @@ public sealed class BackgroundJobOptions
     /// <summary>Whether this process runs the worker. Tests turn it off and run jobs explicitly.</summary>
     public bool Enabled { get; set; } = true;
 
-    public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// The longest the worker sleeps when no job is known to be due. Saved jobs wake it at once, and it
+    /// otherwise wakes at the next due time or lease expiry, so this is only a safety net.
+    /// </summary>
+    public TimeSpan PollInterval { get; set; } = TimeSpan.FromHours(1);
 
     /// <summary>How long a claimed job is reserved; after that, another worker may resume it.</summary>
     public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromMinutes(5);
@@ -157,6 +161,22 @@ public class BackgroundJobQueue(PairrotDbContext db, TimeProvider time, IOptions
         return claimed is [var job]
             ? new JobLease(job.Id, job.Type, job.TargetId, job.Generation, job.AttemptCount, token, owner)
             : null;
+    }
+
+    /// <summary>When the next job of the given types becomes claimable: its due time, or a running job's lease expiry.</summary>
+    public async Task<DateTimeOffset?> NextDueAtAsync(IReadOnlyCollection<string> types, CancellationToken ct)
+    {
+        if (types.Count == 0)
+        {
+            return null;
+        }
+
+        var typeArray = types.ToArray();
+        return await db.BackgroundJobs.AsNoTracking()
+            .Where(j => typeArray.Contains(j.Type)
+                && (j.State == BackgroundJobState.Queued || j.State == BackgroundJobState.RetryWait || j.State == BackgroundJobState.Running))
+            .Select(j => (DateTimeOffset?)(j.State == BackgroundJobState.Running ? j.LeaseExpiresAt : j.DueAt))
+            .MinAsync(ct);
     }
 
     /// <summary>
