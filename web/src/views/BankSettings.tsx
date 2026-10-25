@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type BankConnection, type ListResponse, type Tenant } from '../api'
 import { ErrorText, Section } from '../components'
+import { SimulateIncomingPayment } from '../sandbox'
+import { useSandbox } from '../sandboxStatus'
 import { formatDate, useAction } from '../util'
 import { ForwardingPanel } from './Forwarding'
 import { PaymentQrPanel } from './PaymentQr'
@@ -158,6 +160,8 @@ function ConnectionCard({
   const [copied, setCopied] = useState(false)
   const [showQr, setShowQr] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [showSimulation, setShowSimulation] = useState(false)
+  const sandbox = useSandbox()
   const { busy, error, run } = useAction()
   const live = c.address_status === 'live_created'
 
@@ -294,6 +298,11 @@ function ConnectionCard({
           <button className="secondary" onClick={() => setShowQr(!showQr)}>
             {showQr ? 'Close payment QR' : 'Generate payment QR'}
           </button>
+          {sandbox && (
+            <button className="secondary" onClick={() => setShowSimulation(!showSimulation)}>
+              {showSimulation ? 'Close simulation' : 'Simulate incoming payment'}
+            </button>
+          )}
           <button
             className="danger"
             disabled={busy}
@@ -332,6 +341,7 @@ function ConnectionCard({
       )}
       <ErrorText error={error} />
       {canChange && showQr && <PaymentQrPanel basePath={basePath} connection={c} owner={owner} />}
+      {canChange && sandbox && showSimulation && <SimulateIncomingPayment path={path} />}
     </div>
   )
 }

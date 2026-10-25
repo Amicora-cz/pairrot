@@ -198,6 +198,12 @@ code.details {
   color: #1d2330;
 }
 
+.badge-sandbox {
+  background: #ffe066;
+  color: #1d2330;
+  font-weight: 600;
+}
+
 .badge-active {
   background: #d4f2dc;
 }

@@ -1,10 +1,15 @@
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Pairrot.Core.Banking;
 using Pairrot.Core.Tenants;
+using Pairrot.Core.Webhooks;
 using Pairrot.Core.Inbound;
 using Pairrot.Infrastructure;
+using Pairrot.Infrastructure.Banking;
 using Pairrot.Infrastructure.Erasure;
 using Pairrot.Infrastructure.Inbound;
 using Pairrot.Infrastructure.Matching;
@@ -104,8 +109,17 @@ const string Usage = """
                                                Shows the count and destination; --apply queues
                                                them to the endpoint's current destination.
 
+      sandbox seed [--webhook-url <url>] [--bank-code <code>]
+                                               Local sandbox only (Feature 21; needs Sandbox:Enabled and
+                                               the Development or Testing environment): ensure a
+                                               sandbox root tenant (default sandbox.local) with one bank
+                                               connection and its inbound address, issue new keys, and
+                                               with --webhook-url a test webhook endpoint. Idempotent;
+                                               keys and the signing secret are shown once.
+
     Common options:
-      --root <external-id>   Root tenant for setup and keys (default: nalekci.cz)
+      --root <external-id>   Root tenant for setup, keys, and sandbox seed (default: nalekci.cz,
+                             sandbox.local for sandbox seed)
       --operator <name>      Recorded in the audit log (default: current OS user)
 
     Tenants (<t>) are given by ID, by root external ID (nalekci.cz), or as root/child
@@ -178,6 +192,9 @@ switch (args)
             ? await EnsureUserAsync(adminEmail, setup.Tenant.ExternalId)
             : 0;
     }
+
+    case ["sandbox", "seed", ..]:
+        return await SeedSandboxAsync();
 
     case ["keys", "list", ..]:
     {
@@ -732,6 +749,200 @@ string? RequireOption(string name)
 
     Console.Error.WriteLine($"--{name} is required.");
     return null;
+}
+
+// Feature 21. Same rule as the API's: sandbox payments are never real, so never outside Development and Testing.
+async Task<int> SeedSandboxAsync()
+{
+    if (!builder.Configuration.GetValue<bool>("Sandbox:Enabled"))
+    {
+        Console.Error.WriteLine("Sandbox mode is off; set Sandbox__Enabled=true (Development or Testing only).");
+        return 1;
+    }
+
+    if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing"))
+    {
+        Console.Error.WriteLine("Sandbox:Enabled is only allowed in Development and Testing; sandbox payments are never real.");
+        return 1;
+    }
+
+    var sandboxRoot = options.GetValueOrDefault("root") ?? "sandbox.local";
+    var bankCode = options.GetValueOrDefault("bank-code") ?? "0800";
+    if (bankCode.Length != 4 || !bankCode.All(char.IsAsciiDigit))
+    {
+        Console.Error.WriteLine("--bank-code must have exactly 4 digits.");
+        return 1;
+    }
+
+    await MigrateAsync();
+    var setup = await admin.SetupAsync(sandboxRoot, "Sandbox", null, operatorName);
+    if (setup.Error is { } setupError)
+    {
+        return Fail(setupError);
+    }
+
+    var tenant = setup.Value!.Tenant;
+    if (setup.Value.Created)
+    {
+        Console.WriteLine($"Created sandbox root tenant '{tenant.ExternalId}' ({tenant.Id}).");
+        Console.WriteLine("Store these keys now; they cannot be shown again.");
+        PrintKey(setup.Value.TenantKey!);
+        PrintKey(setup.Value.ManagementKey!);
+    }
+    else
+    {
+        Console.WriteLine($"Sandbox root tenant '{tenant.ExternalId}' already exists ({tenant.Id}).");
+        Console.WriteLine("Issued new keys; store them now, they cannot be shown again.");
+        foreach (var purpose in new[] { ApiKeyPurpose.Tenant, ApiKeyPurpose.Management })
+        {
+            var issued = await admin.IssueRootKeyAsync(sandboxRoot, purpose, "sandbox seed", operatorName);
+            if (issued.Error is { } keyError)
+            {
+                return Fail(keyError);
+            }
+
+            PrintKey(issued.Value!);
+        }
+    }
+
+    var actor = Actor.Administrator(operatorName);
+    var banks = services.GetRequiredService<BankConnectionService>();
+    var db = services.GetRequiredService<PairrotDbContext>();
+    const string connectionLabel = "Sandbox";
+    var connection = await db.BankConnections.AsNoTracking()
+        .Where(b => b.TenantId == tenant.Id && b.Status == BankConnectionStatus.Active && b.Label == connectionLabel)
+        .OrderBy(b => b.Id)
+        .FirstOrDefaultAsync();
+    if (connection is null)
+    {
+        // Deterministic per root and bank code; an account any tenant has active is skipped for the next candidate.
+        for (var attempt = 0; connection is null; attempt++)
+        {
+            var account = SandboxAccount(sandboxRoot, bankCode, attempt);
+            if (await db.BankConnections.AnyAsync(b => b.Iban == account.Iban && b.Status == BankConnectionStatus.Active))
+            {
+                continue;
+            }
+
+            var created = await banks.CreateAsync(tenant.Id, null, new BankConnectionInput(account.AccountNumber, null, null, connectionLabel), actor);
+            if (created.Error is { Code: "bank_connection_exists" or "account_unavailable" })
+            {
+                continue;
+            }
+
+            if (created.Error is { } createError)
+            {
+                return Fail(createError);
+            }
+
+            connection = created.Value!.Connection;
+            Console.WriteLine($"Created bank connection {connection.Id} for {connection.AccountNumber}.");
+        }
+    }
+    else
+    {
+        Console.WriteLine($"Bank connection {connection.Id} for {connection.AccountNumber} already exists.");
+    }
+
+    var addressed = await banks.AssignAddressAsync(tenant.Id, null, connection.Id, actor);
+    if (addressed.Error is { } addressError)
+    {
+        return Fail(addressError);
+    }
+
+    var address = addressed.Value!.Address;
+    Console.WriteLine($"Inbound address {address?.Address ?? "-"} ({address?.ProviderKind ?? "-"}, {(address is null ? "-" : Snake(address.Environment))}).");
+    if (address is { Environment: not InboundEnvironment.Test })
+    {
+        Console.Error.WriteLine("The address is not on a test instance; sandbox payments will be refused (sandbox_requires_test_address). Use the stub provider.");
+    }
+
+    if (options.GetValueOrDefault("webhook-url") is { } webhookUrl)
+    {
+        var webhooks = services.GetRequiredService<WebhookService>();
+        var caller = new WebhookCaller(tenant.Id, null, true, actor);
+        var existing = await webhooks.GetAsync(caller);
+        if (existing.Value is { } view)
+        {
+            var endpoint = view.Endpoint;
+            if (endpoint.Environment != InboundEnvironment.Test)
+            {
+                Console.Error.WriteLine($"The tenant's webhook endpoint {endpoint.Id} is not a test endpoint; sandbox events would not reach it.");
+                return 1;
+            }
+
+            if (endpoint.Url != webhookUrl.Trim())
+            {
+                var updated = await webhooks.UpdateAsync(caller, endpoint.Version, new EndpointChange(Url: webhookUrl));
+                if (updated.Error is { } updateError)
+                {
+                    return FailWebhook(updateError);
+                }
+
+                Console.WriteLine($"Webhook endpoint {endpoint.Id} now points to {webhookUrl.Trim()}; queued work for the old URL is held.");
+            }
+            else
+            {
+                Console.WriteLine($"Webhook endpoint {endpoint.Id} already points to {endpoint.Url}.");
+            }
+        }
+        else if (existing.Error is { Code: "not_found" })
+        {
+            SecretReveal? reveal = null;
+            var command = new CommandRequest(Guid.NewGuid().ToString(), "webhook_create", "sandbox-seed", actor);
+            var created = await webhooks.CreateAsync(caller, webhookUrl, WebhookScope.OwnAndDirectChildren, InboundEnvironment.Test,
+                WebhookEvents.Subscribable.ToArray(), command, v => v, r => reveal = r);
+            if (created.Error is { } createError)
+            {
+                return FailWebhook(createError);
+            }
+
+            Console.WriteLine($"Created test webhook endpoint {reveal!.Endpoint.Endpoint.Id} for {webhookUrl.Trim()} (all event types, own and direct children).");
+            Console.WriteLine("Store this signing secret now; it cannot be shown again.");
+            Console.WriteLine($"  signing key {reveal.KeyId}: {reveal.Secret}");
+        }
+        else
+        {
+            return Fail(existing.Error!);
+        }
+    }
+
+    const string api = "http://localhost:5034";
+    Console.WriteLine();
+    Console.WriteLine("Create a payment request (run the API with --launch-profile https-sandbox; use the tenant key):");
+    Console.WriteLine($"  curl -X POST {api}/v1/tenant/payment-requests -H \"Authorization: Bearer <tenant key>\" -H \"Content-Type: application/json\" "
+        + $"-H \"Idempotency-Key: sandbox-1\" -d '{{\"bank_connection_id\":\"{connection.Id}\",\"external_id\":\"sandbox-1\",\"amount\":45000,\"currency\":\"CZK\",\"message\":\"Sandbox\"}}'");
+    Console.WriteLine("Pay it (the remainder, with its variable symbol):");
+    Console.WriteLine($"  curl -X POST {api}/v1/tenant/payment-requests/<payment-request-id>/sandbox/pay -H \"Authorization: Bearer <tenant key>\" -H \"Content-Type: application/json\" -d '{{}}'");
+    return 0;
+}
+
+// The webhook destination rules refuse a local receiver unless it is allowed.
+static int FailWebhook(ServiceError error)
+{
+    if (error.Code == "invalid_url")
+    {
+        Console.Error.WriteLine("A local receiver needs Webhooks__AllowedLocalDestinations__0=<host:port> (Development and Testing only), e.g. localhost:5099.");
+    }
+
+    return Fail(error);
+}
+
+// A valid account derived from the root and bank code: no prefix, ten digits with the CNB mod-11 check digit.
+static CzechBankAccount SandboxAccount(string root, string bankCode, int attempt)
+{
+    int[] weights = [6, 3, 7, 9, 10, 5, 8, 4, 2, 1];
+    for (var salt = 0; ; salt++)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"pairrot-sandbox:{root}:{bankCode}:{attempt}:{salt}"));
+        var digits = string.Concat(hash.Take(9).Select(b => (b % 10).ToString()));
+        var sum = digits.Select((c, i) => (c - '0') * weights[i]).Sum();
+        var check = (11 - sum % 11) % 11;
+        if (check != 10 && CzechBankAccount.Parse($"{digits}{check}/{bankCode}", null).Account is { } account)
+        {
+            return account;
+        }
+    }
 }
 
 async Task MigrateAsync()
