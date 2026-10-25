@@ -1,5 +1,6 @@
-# Local development only. Production will use Neon PostgreSQL instead of this container;
-# the app picks the database via ConnectionStrings__Pairrot.
+# Local development database (appsettings.Development.json points at localhost:5433).
+# Production runs its own container from deploy/docker-compose.yml; integration tests start
+# throwaway databases with Testcontainers.
 name: pairrot
 
 services:

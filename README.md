@@ -40,7 +40,7 @@ The target architecture is described in [docs/architektura.md](docs/architektura
 - .NET 10, ASP.NET Core minimal APIs
 - EF Core 10 with Npgsql (PostgreSQL), snake_case naming
 - ASP.NET Core Identity (password storage), cookie authentication, antiforgery, Data Protection keys in PostgreSQL
-- PostgreSQL 17 in Docker for local development; [Neon](https://neon.tech) is the planned production database
+- PostgreSQL 17 in Docker, locally (`docker-compose.yml`) and in production (`deploy/docker-compose.yml`)
 - Vite + React + TypeScript for the local test SPA (never deployed)
 - xUnit, Testcontainers
 
@@ -101,10 +101,10 @@ Sign in with the administrator created by `setup` or `users create`. Vite proxie
 
 ## Configuration
 
-The database connection is read from `ConnectionStrings:Pairrot` (environment variable: `ConnectionStrings__Pairrot`). Local development values are in `appsettings.Development.json`. To use Neon or any other PostgreSQL, set the environment variable; no code changes are needed:
+The database connection is read from `ConnectionStrings:Pairrot` (environment variable: `ConnectionStrings__Pairrot`). Local development values are in `appsettings.Development.json`. To use any other PostgreSQL, set the environment variable; no code changes are needed:
 
 ```bash
-ConnectionStrings__Pairrot="Host=<neon-host>;Database=pairrot;Username=<user>;Password=<password>;SSL Mode=Require"
+ConnectionStrings__Pairrot="Host=<host>;Database=pairrot;Username=<user>;Password=<password>;SSL Mode=Require"
 ```
 
 Do not commit real credentials.
@@ -236,7 +236,7 @@ A bank connection is one tenant's registration of a Czech CZK account. Root tena
 
 - `external_id` (up to 200 characters) is required. Amount, currency, symbol, and message follow the payment QR rules above. `description` (up to 1000 characters) is internal and not in the QR. `due_at` must state its offset and is stored in UTC.
 - A new `external_id` returns `201` with the record, `replayed: false`, and `payment_instructions` (account, payment fields, `format`, `generator_version`, and the SPAYD `payload`). Repeating the same creation returns the current record with `200` and `replayed: true`, also after later edits or cancellation; it never reopens anything. The same `external_id` with different original input returns `409 external_id_conflict`. The comparison uses a SHA-256 fingerprint of the original validated input, so omitted and `null` optional fields are equal, but `000123` and `123` are not.
-- `variable_symbol` is optional (Feature 12). Omitted or `null`, Pairrot assigns the lowest unused symbol of the bank account at or above its cursor, starting at `1`, as a plain number without leading zeros, and returns it in the record and the QR. Symbols are never reused, reset, or wrapped; when `9999999999` has been assigned, automatic creation returns `409 variable_symbol_space_exhausted` (a supplied unused symbol still works). A supplied symbol (1–10 digits, leading zeros kept) is used exactly as given; empty or invalid values are `400`, never silently replaced. Every creation on an account, either mode and through any of its registrations, holds that account's allocator lock until it commits.
+- `variable_symbol` is optional (Feature 12). Omitted or `null`, Pairrot assigns a ten-digit `YYYYNNNNNN` symbol: the creation year in `Europe/Prague` followed by a six-digit sequence `000001`–`999999` per physical bank account and year (e.g. `2026000001`, `2026000002`, then `2027000001` in the new year). It skips reserved symbols and returns the saved value in the record and QR. Exhausting the annual series returns `409 variable_symbol_space_exhausted`, without wrapping or reusing symbols (a supplied unused symbol still works). Legacy symbols, frozen QR payloads, and idempotent replays remain unchanged; old cursors enter the current year's series automatically without a schema migration. A supplied symbol (1–10 digits, leading zeros kept) is used exactly as given; empty or invalid values are `400`, never silently replaced. Every creation on an account, either mode and through any of its registrations, holds that account's allocator lock until it commits.
 - The creation mode is part of the original input: retry an automatic creation without `variable_symbol` (omitted and `null` are equal), and do not copy the assigned symbol back into the body; switching modes on a retry is `409 external_id_conflict`.
 - Variable symbols are unique per physical bank account (Feature 13) with leading zeros ignored: `123` and `000123` collide (`409 variable_symbol_conflict`), cancelled requests and every earlier registration of the account included, also another tenant's. Generated symbols skip every symbol already saved on the account. A supplied high symbol does not move the automatic cursor. The same symbol on another account is allowed.
 - The account number, IBAN, and payload are saved at creation and never regenerated. `GET .../{id}/payment-instructions` and `GET .../{id}/qr.png` return them (`Cache-Control: no-store`) only while the request is open (nothing paid yet), its bank connection is active, and its tenant is active; otherwise `409 payment_request_cancelled`, `payment_instructions_not_available` (something was paid), `bank_connection_archived`, `tenant_not_active`, or `tenant_deleted`. Archiving a connection does not cancel its requests.
