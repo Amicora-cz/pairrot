@@ -1,22 +1,24 @@
 # Feature 012: automatic variable symbol generation
 
-Status: implemented. Since [Feature 013](./013-bank-account-identity-and-reuse.md) the allocator and symbol uniqueness are per physical bank account instead of per connection.
+Status: implemented, with annual `YYYYNNNNNN` numbering. Since [Feature 013](./013-bank-account-identity-and-reuse.md) the allocator and symbol uniqueness are per physical bank account instead of per connection.
 
 ## Goal and scope
 
-Extend [Feature 005](./005-expected-payments.md) so NaLekci can create an expected payment with its reservation reference, destination bank connection, amount, and currency, without assigning a variable symbol (VS). Pairrot assigns the VS, saves it with the request, and includes it in the existing response and QR instructions.
+Extend [Feature 005](./005-expected-payments.md) so an API client can create an expected payment with its reservation reference, destination bank connection, amount, and currency, without assigning a variable symbol (VS). Pairrot assigns the VS, saves it with the request, and includes it in the existing response and QR instructions.
 
 Keep caller-supplied symbols supported. This feature changes payment-request creation only; standalone QR generation from Feature 004 remains stateless and never allocates or reserves a symbol. Matching, payment states, and webhook contracts from Features 009–011 remain unchanged.
 
 ## 1. Main flow
 
-1. NaLekci creates a reservation and its stable external reference, for example `booking_123`.
+1. A client creates a reservation and its stable external reference, for example `booking_123`.
 2. Its backend creates a payment request for the instructor or studio, omitting `variable_symbol`.
 3. Pairrot checks authorization, validates the input, and looks for an existing request with the same `(tenant_id, external_id)`.
 4. For a new request, Pairrot assigns an unused VS for the selected bank connection and saves the request, its frozen payment instructions, and its audit record atomically.
 5. Pairrot returns the request ID, assigned `variable_symbol`, initial `open` status, and existing payment instructions with the QR payload. The existing PNG endpoint renders the same saved payload.
-6. NaLekci stores the request ID alongside its reservation and displays the QR. It does not generate or reconstruct the VS.
+6. The client stores the request ID alongside its reservation and displays the QR. It does not generate or reconstruct the VS.
 7. A retry after a timeout returns the same request and VS. Incoming payments are matched and reported through the existing payment-status webhook flow.
+
+NaLekci may continue to generate its own VS and send it explicitly; its independent generator should use the same `YYYYNNNNNN` format ([main-panel #1082](https://github.com/Amicora-cz/main-panel/issues/1082)). This does not require calling Pairrot for automatic assignment.
 
 NaLekci continues to own reservation capacity, payment deadlines, cancellation policy, and customer confirmation. Generating a VS neither reserves a lesson nor confirms payment.
 
@@ -50,12 +52,12 @@ Retain existing errors and add `409 variable_symbol_space_exhausted` when no aut
 
 ## 3. Symbol namespace and allocation
 
-- Generate decimal strings in the inclusive range `1`–`9999999999`, using ASCII digits without leading zeros. Use 64-bit arithmetic for allocation and exhaustion checks.
-- Allocate monotonically within each `bank_connection_id`, starting at `1` and skipping symbols already reserved by any saved request. Symbols need not be consecutive and have no business meaning. Do not derive them from a date, reservation ID, tenant ID, or a truncated UUID.
-- Preserve Feature 005's normalized comparison key: `1` and `0001` occupy the same symbol. Caller-supplied zero remains valid under the existing contract, but automatic generation never selects zero.
-- Retain reservations for every saved request, including paid, overpaid, and cancelled requests. Never recycle symbols, reset the allocator at year boundaries, or wrap around at the maximum.
-- Caller-supplied and generated symbols share the same uniqueness constraint. A supplied high symbol must not advance the automatic cursor past otherwise unused lower symbols.
-- Different bank connections have independent namespaces and may use the same symbol. This feature does not introduce uniqueness across tenants or separately registered connections to the same physical bank account; it preserves the existing `bank_connection_id` scope.
+- Generate ten ASCII digits in the form `YYYYNNNNNN`. `YYYY` is the creation year in `Europe/Prague`, not the due-date or lesson year; `NNNNNN` runs from `000001` to `999999`. Use 64-bit arithmetic. Examples: `2026000001`, `2026000002`, then `2027000001` after Czech midnight on New Year.
+- Allocate monotonically within the current year's series per physical `bank_account_id`, skipping every reserved symbol across all registrations and tenants. Separate physical accounts have independent series.
+- Preserve Feature 005's normalized comparison key: `1` and `0001` occupy the same symbol. Caller-supplied zero remains valid, but automatic generation never selects sequence `000000`.
+- Retain reservations for every saved request, including paid, overpaid, and cancelled requests. The sequence starts again with the new year prefix, but a complete VS is never reused. Annual exhaustion returns `409 variable_symbol_space_exhausted`; never wrap into the following year early.
+- Supplied and generated symbols share the same uniqueness constraint. A supplied high symbol does not advance the automatic cursor; an explicitly supplied current-year symbol is skipped when reached.
+- Previously issued symbols, frozen QR payloads and original creation fingerprints remain unchanged. Replays return the original symbol even after a year change or the transition from the legacy `1`, `2`, … format.
 
 The symbol is a payment reference, not an authentication secret. Reads and QR rendering retain the existing authorization rules.
 
@@ -83,29 +85,29 @@ Concurrent equivalent calls for one external reference produce one request and o
 
 Use PostgreSQL as the authority for allocation, shared across processes and restarts. Do not use an in-memory counter, unlocked `MAX(...) + 1`, or a check-then-insert loop without database serialization.
 
-A suitable implementation is one allocator row per bank connection, with a persisted 64-bit `next_candidate` and a row lock held until the creation transaction commits. Initialize missing rows safely under concurrent first use. Both supplied and automatic creation must participate in the same per-connection serialization, including for existing bank connections.
+A suitable implementation is one allocator row per physical bank account, with a persisted 64-bit `next_candidate` and a row lock held until the creation transaction commits. Initialize missing rows safely under concurrent first use. Both supplied and automatic creation must participate in the same per-account serialization, including for existing bank connections.
 
 Within that transaction:
 
 1. Recheck replay and required ownership/bank-connection lifecycle conditions before assigning a symbol.
-2. For automatic mode, find the first unreserved normalized key at or above `next_candidate`. Skip existing supplied and generated keys using indexed database queries. Do not report exhaustion merely because a bounded collision retry count was reached.
+2. For automatic mode, use `next_candidate` when it is within the current year's series or equals its exhausted sentinel (`YYYY999999 + 1`); otherwise start at `YYYY000001`. Find the first unreserved normalized key at or above that candidate and no greater than `YYYY999999`. Skip existing supplied and generated keys using indexed database queries. Do not report exhaustion merely because a bounded collision retry count was reached.
 3. Build the frozen bank-account snapshot and QR payload with the chosen VS, then save the payment request and audit record. Preserve existing matching-job scheduling for newly created requests.
 4. Advance the cursor beyond the assigned value and commit with the request. For supplied mode, reserve the exact input through the existing unique constraint without jumping the cursor to that supplied value.
 
-Keep database uniqueness on `(tenant_id, external_id)` and `(bank_connection_id, variable_symbol_key)` as the final backstop. Handle external-reference races even when competing calls use different bank connections: the loser reloads the winning request and applies the original-input comparison. No constraint failure may leave a partially saved request, QR, or allocator update.
+Keep database uniqueness on `(tenant_id, external_id)` and `(bank_account_id, variable_symbol_key)` as the final backstop. Handle external-reference races even when competing calls use different bank connections: the loser reloads the winning request and applies the original-input comparison. No constraint failure may leave a partially saved request, QR, or allocator update.
 
 A rollback does not publish or reserve an uncommitted symbol. Return generated instructions only after successful commit. A commit followed by a lost HTTP response is recovered through ordinary replay.
 
-Allow `10000000000` only as an internal exhausted-cursor sentinel, never as a VS. Exhaustion returns the documented conflict without a partial request; existing replays and explicit creation with an otherwise unused valid symbol remain possible. Never reset the cursor to solve exhaustion.
+The exhausted cursor for a year is `YYYY999999 + 1`, never an issued VS. Exhaustion returns the documented conflict without a partial request; existing replays and explicit creation with an otherwise unused valid symbol remain possible. Do not reset within the same year to solve exhaustion. At the next year boundary, the new prefix permits a fresh series. The database retains its legacy cursor storage range of `1`–`10000000000`.
 
 ## 6. Migration and compatibility
 
 - Add persisted creation mode, for example `variable_symbol_source` with values `automatic` and `supplied`, constrained to valid values. Backfill all existing requests as `supplied`.
-- Add allocator state with a foreign key to the bank connection and a valid cursor range of `1`–`10000000000`. Existing connections start at `1`, either through migration or safe lazy initialization, then skip all historical reservations. Do not seed from the maximum supplied symbol.
+- Add allocator state with a foreign key to the physical bank account and a valid cursor range of `1`–`10000000000`. Missing rows are safely initialized with the internal cursor `1`; automatic creation maps legacy or other-year cursors to the current year's `YYYY000001` and skips all historical reservations. Do not seed from the maximum supplied symbol. The annual-format change needs no schema migration and does not rewrite existing rows or fingerprints.
 - Keep stored `variable_symbol`, normalized keys, request IDs, external references, QR payloads, and existing creation fingerprints unchanged.
 - Preserve the current `v1` fingerprint calculation for supplied mode, including existing rows. Use a distinct versioned fingerprint for automatic mode with an explicit automatic marker and the other normalized original creation fields. Do not recompute historical fingerprints from edited records.
 - Existing clients that supply VS retain their behavior and response shape. The creation mode can remain internal; this feature does not require a new response field or webhook schema.
-- Deploy the migration and new creation behavior together, without mixed old/new writers: older application instances do not participate in allocator locking and cannot interpret automatic creation fingerprints.
+- Deploy the new numbering behavior without mixed old/new writers, so older instances cannot continue issuing plain-number symbols. The original Feature 012 migration and creation fingerprints stay unchanged.
 
 The standalone QR API still treats an omitted VS as absent from the QR. It must not create a payment request, move the cursor, or reserve a symbol. Creation of a saved payment request always produces a VS after this feature.
 
@@ -118,15 +120,15 @@ Update API examples and any existing CLI payment-request creation command so omi
 ## 8. Acceptance criteria
 
 1. Omitting VS or sending null creates a saved request with a valid generated VS; the response, instructions, saved payload, and decoded PNG contain the same value.
-2. Generation on a fresh bank connection starts at `1`. Existing `1`, `0002`, and cancelled `3` cause the next automatic request to use `4`. A supplied `9999999999` alone does not prevent automatic allocation of `1`.
+2. Generation on a fresh account in 2026 starts at `2026000001`. Existing `2026000001`, `2026000002`, and cancelled `2026000003` cause the next automatic request to use `2026000004`. A supplied `9999999999` alone does not prevent allocation of `2026000001`. Legacy short symbols and their QR payloads/replays stay unchanged.
 3. Supplied VS retains its existing validation, leading zeros, and conflict behavior. Empty/invalid values are rejected without allocating a symbol.
 4. Equivalent automatic retries, including omission versus null and a lost response after commit, return the original ID and VS with replay semantics. Retries after edits, payment, cancellation, and connection archival retain Feature 005/009 lifecycle behavior.
 5. Changed amount, account, external-reference payload, or creation mode conflicts as specified. Supplied-mode retries of pre-migration records still work, including records whose description or due time was edited.
 6. Concurrent automatic creates for different references on one connection receive distinct symbols. Concurrent creates for one reference produce one record; competing supplied and automatic creates cannot claim the same normalized key. Run these checks against PostgreSQL with separate database contexts/connections.
 7. Concurrent first use safely initializes one allocator. Concurrent same-reference calls targeting different connections resolve to one creation and one input conflict without orphaned state.
 8. Restarts retain the cursor and reservations. An injected failure before commit leaves no published request or partial state; a successful commit followed by a simulated response loss is replayable.
-9. Separate bank connections allocate independently. Tenant/parent/sibling permissions and inactive ownership/connection checks remain enforced, with no cross-tenant reads or reservations on unauthorized attempts.
-10. Boundary fixtures verify the maximum value and the exhausted sentinel without billions of inserts or iterations. Exhaustion never wraps; existing replay and valid unused caller-supplied symbols still work.
+9. Separate physical bank accounts allocate independently; registrations of the same account share reservations. Tenant/parent/sibling permissions and inactive ownership/connection checks remain enforced, with no cross-tenant reads or reservations on unauthorized attempts.
+10. Boundary fixtures verify the annual maximum and exhausted sentinel without a million inserts. Exhaustion never wraps; replay and valid unused supplied symbols still work. The following year becomes available at Prague midnight even while UTC is still in December. Repeated year crossings never reuse historical symbols.
 11. A generated VS participates in the existing exact-match flow and produces the usual signed `payment_request.updated` event carrying the original external reference. Local fixtures and a test receiver suffice; no real bank transfer or NaLekci production receiver is required for this feature.
 12. Standalone QR calls remain stateless. The local request form supports both modes and displays the assigned symbol after creation.
 
@@ -134,4 +136,4 @@ Update API examples and any existing CLI payment-request creation command so omi
 
 NaLekci can create and retry an expected payment using only its reservation reference and payment details, while Pairrot owns automatic VS assignment, persistence, and uniqueness. Caller-supplied symbols remain supported.
 
-Configurable numbering formats, yearly resets, symbol recycling, cross-connection account deduplication, reservation expiry, refunds, and implementation of NaLekci's receiver are outside this feature.
+Configurable numbering formats, symbol recycling, reservation expiry, refunds, and implementation of NaLekci's receiver are outside this feature. Account identity and reuse are covered by Feature 013. NaLekci's independent generator is tracked in main-panel #1082.

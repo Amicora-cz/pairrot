@@ -392,7 +392,8 @@ public class WebhookTests(PairrotFixture fx)
             bank_connection_id = account.ConnectionId, external_id = externalId, amount = 45000, currency = "CZK",
         }).ExpectAsync(HttpStatusCode.Created);
         var vs = request.Str("variable_symbol");
-        Assert.Equal("1", vs);
+        var year = TimeZoneInfo.ConvertTime(W.Clock.GetUtcNow(), TimeZoneInfo.FindSystemTimeZoneById("Europe/Prague")).Year;
+        Assert.Equal($"{year:D4}000001", vs);
 
         await P.DeliverAsync(account, ParsingHarness.Incoming(account.Bank, vs: vs));
         await W.RunDeliveriesAsync();

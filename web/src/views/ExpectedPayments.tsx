@@ -307,7 +307,7 @@ function CreateRequest({
       <label>
         <input type="checkbox" checked={form.custom_symbol} onChange={(e) => edit({ custom_symbol: e.target.checked })} /> Enter my own
         variable symbol
-        <span className="muted">Otherwise Pairrot assigns the next unused symbol for this bank account.</span>
+        <span className="muted">Otherwise Pairrot assigns a YYYYNNNNNN symbol, numbered from 000001 per bank account and year (Europe/Prague).</span>
       </label>
       {form.custom_symbol ? (
         <label>

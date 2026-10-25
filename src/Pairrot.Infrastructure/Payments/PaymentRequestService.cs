@@ -171,6 +171,7 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
             return lockedReplay;
         }
 
+        var now = Now();
         string variableSymbol;
         string variableSymbolKey;
         if (draft.VariableSymbolKey is { } suppliedKey)
@@ -187,10 +188,11 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
         }
         else
         {
-            if (await FindFreeVariableSymbolAsync(accountId, cursor, ct) is not { } assigned)
+            var series = VariableSymbolSeries.At(now);
+            if (await FindFreeVariableSymbolAsync(accountId, series.ResumeAt(cursor), series.Last, ct) is not { } assigned)
             {
                 return ServiceError.Conflict("variable_symbol_space_exhausted",
-                    "No automatic variable symbol is left on this bank account; supply an unused variable_symbol instead.");
+                    "No automatic variable symbol is left for this year on this bank account; supply an unused variable_symbol instead.");
             }
 
             await db.Database.ExecuteSqlAsync(
@@ -202,7 +204,6 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
 
         var connection = await db.BankConnections.AsNoTracking().SingleAsync(b => b.Id == draft.BankConnectionId, ct);
         var payment = draft.Payment with { Iban = connection.Iban, VariableSymbol = variableSymbol };
-        var now = Now();
         var request = new PaymentRequest
         {
             Id = Guid.CreateVersion7(),
@@ -490,8 +491,9 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
     }
 
     /// <summary>
-    /// Locks the account's allocator until the transaction ends, creating it at 1 on first use,
-    /// and returns its cursor. Concurrent first uses insert one row; the others wait for it.
+    /// Locks the account's allocator until the transaction ends, creating it with the internal
+    /// initial cursor 1 on first use. Automatic assignment maps it to the current year's series.
+    /// Concurrent first uses insert one row; the others wait for it.
     /// </summary>
     private async Task<long> LockAllocatorAsync(Guid accountId, CancellationToken ct)
     {
@@ -506,10 +508,10 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
     /// <summary>
     /// The lowest symbol at or above <paramref name="cursor"/> that no request on the account holds
     /// (leading zeros ignored, any registration, any tenant), or <c>null</c> when none is left up to
-    /// the maximum. Only the cursor and the successors of symbols taken at or above it can be the
+    /// this year's maximum. Only the cursor and the successors of symbols taken at or above it can be the
     /// first gap, so both lookups use the (account, number) index.
     /// </summary>
-    private async Task<long?> FindFreeVariableSymbolAsync(Guid accountId, long cursor, CancellationToken ct) =>
+    private async Task<long?> FindFreeVariableSymbolAsync(Guid accountId, long cursor, long maximum, CancellationToken ct) =>
         await db.Database.SqlQuery<long?>($"""
             SELECT min(c.candidate) AS "Value"
             FROM (
@@ -517,9 +519,10 @@ public class PaymentRequestService(PairrotDbContext db, TenantService tenants, B
                 UNION ALL
                 SELECT p.variable_symbol_number + 1
                 FROM payment_requests p
-                WHERE p.bank_account_id = {accountId} AND p.variable_symbol_number >= {cursor}
+                WHERE p.bank_account_id = {accountId}
+                  AND p.variable_symbol_number >= {cursor} AND p.variable_symbol_number < {maximum}
             ) c
-            WHERE c.candidate <= {PaymentRequestRules.MaxAutomaticVariableSymbol}
+            WHERE c.candidate <= {maximum}
               AND NOT EXISTS (
                 SELECT 1 FROM payment_requests q
                 WHERE q.bank_account_id = {accountId} AND q.variable_symbol_number = c.candidate)

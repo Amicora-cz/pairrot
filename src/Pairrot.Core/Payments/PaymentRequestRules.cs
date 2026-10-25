@@ -57,12 +57,12 @@ public static partial class PaymentRequestRules
     public const string QrGeneratorVersion = "pairrot-spayd-1";
 
     /// <summary>
-    /// The highest automatically assigned symbol (Feature 012). Automatic symbols are decimal
-    /// numbers from 1 to this value, without leading zeros, never reused or wrapped around.
+    /// The storage ceiling for automatic symbols (Feature 012). New symbols use the current
+    /// year's YYYYNNNNNN series; each year has its own lower ceiling and exhausted cursor.
     /// </summary>
     public const long MaxAutomaticVariableSymbol = 9_999_999_999;
 
-    /// <summary>An allocator cursor past <see cref="MaxAutomaticVariableSymbol"/>: the connection has no automatic symbol left.</summary>
+    /// <summary>The storage ceiling for allocator cursors, including the exhausted cursor of year 9999.</summary>
     public const long ExhaustedVariableSymbolCursor = MaxAutomaticVariableSymbol + 1;
 
     /// <summary>

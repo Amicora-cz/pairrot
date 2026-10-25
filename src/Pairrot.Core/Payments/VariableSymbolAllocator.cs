@@ -11,9 +11,9 @@ public class VariableSymbolAllocator
     public Guid BankAccountId { get; set; }
 
     /// <summary>
-    /// The lowest symbol automatic assignment considers next; lower symbols are taken or were
-    /// skipped. Starts at 1, only moves up, and equals
-    /// <see cref="PaymentRequestRules.ExhaustedVariableSymbolCursor"/> once nothing is left.
+    /// The next candidate in the current YYYYNNNNNN series, or that year's maximum plus one
+    /// when exhausted. A value outside the current year's series starts at its 000001;
+    /// 1 is the initial/legacy cursor. Every saved symbol remains reserved across year changes.
     /// </summary>
     public long NextCandidate { get; set; } = 1;
 }

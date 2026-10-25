@@ -66,7 +66,7 @@ Why any tenant may register a released account: a number proves nothing (Feature
 
 - Uniqueness of `variable_symbol_key` moves from `(bank_connection_id, …)` to `(bank_account_id, …)` over every request of the account, whatever its tenant or connection. The same symbol on another account stays allowed.
 - The allocator is one row per account. The cursor carries over from the connection's allocator in the migration (today the two are one-to-one).
-- Automatic allocation skips every symbol already saved on the account, including symbols of another tenant's archived registration. Nothing else about Feature 012 changes: no reuse, no reset, no wrap, exhaustion as before.
+- Automatic allocation skips every symbol already saved on the account, including symbols of another tenant's archived registration. Feature 012 now uses an annual `YYYYNNNNNN` series per physical account (year in `Europe/Prague`); the sequence restarts with a new year prefix, while complete symbols are never reused and annual exhaustion never wraps. Existing symbols and QR payloads stay unchanged.
 - A supplied symbol already used on the account by any registration is `409 variable_symbol_conflict`. The message stays as it is and names no owner. A tenant re-registering its own account therefore sees its own old symbols conflict, which is correct: the old QR codes are still out there.
 - The fingerprint of a creation and its replay are untouched.
 
