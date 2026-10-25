@@ -13,6 +13,7 @@ using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Matching;
 using Pairrot.Infrastructure.Payments;
 using Pairrot.Infrastructure.Persistence;
+using Pairrot.Infrastructure.Sandbox;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Transactions;
 using Pairrot.Infrastructure.Users;
@@ -101,7 +102,8 @@ public static class DependencyInjection
 
         // Feature 007: bank profiles are code, selected by bank code; tenants cannot add or choose them.
         services.AddSingleton<IBankProfile, CeskaSporitelnaProfile>();
-        services.AddSingleton<BankProfileRegistry>();
+        services.AddSingleton(sp => new BankProfileRegistry(
+            sp.GetServices<IBankProfile>(), sp.GetRequiredService<IOptions<SandboxOptions>>().Value.Enabled ? new SandboxBankProfile() : null));
         services.Configure<MessageParsingOptions>(configuration.GetSection(MessageParsingOptions.Section));
         services.AddScoped<IBackgroundJobHandler, MessageParseJob>();
         services.AddScoped<ParseScheduling>();
@@ -120,6 +122,15 @@ public static class DependencyInjection
         services.AddScoped<BankConnectionService>();
         services.AddScoped<PaymentQrService>();
         services.AddScoped<PaymentRequestService>();
+
+        // Feature 021: sandbox mode; the sandbox profile is part of the registry only while it is enabled.
+        services.AddOptions<SandboxOptions>()
+            .Bind(configuration.GetSection(SandboxOptions.Section))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<SandboxOptions>, SandboxOptionsValidator>();
+        services.AddSingleton<ISandboxNoticeRenderer, SandboxProfileRenderer>();
+        services.AddSingleton<ISandboxNoticeRenderer, CeskaSporitelnaRenderer>();
+        services.AddScoped<SandboxService>();
 
         // Feature 009: matching, manual allocation, review, and the payment-change journal.
         services.AddOptions<MatchingOptions>()

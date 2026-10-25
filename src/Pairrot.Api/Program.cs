@@ -67,5 +67,6 @@ app.MapTenantEndpoints();
 app.MapSubtenantEndpoints();
 app.MapManagementEndpoints();
 app.MapWebhookEndpoints();
+app.MapSandboxStatus();
 
 app.Run();

@@ -40,6 +40,10 @@ public static class SubtenantEndpoints
         group.MapSubtenantTransactions();
         group.MapSubtenantMatching();
         group.MapSubtenantWebhooks();
+        if (app.IsEnabled())
+        {
+            group.MapSubtenantSandbox();
+        }
     }
 
     private static async Task<IResult> CreateAsync(

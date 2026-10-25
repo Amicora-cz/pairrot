@@ -1,6 +1,6 @@
 # Feature 021: sandbox mode for integration testing
 
-Status: proposed. Local only: sandbox mode runs on a developer's machine against the local database, never on the VPS.
+Status: implemented (see [Implementation notes](#implementation-notes)). Local only: sandbox mode runs on a developer's machine against the local database, never on the VPS.
 
 ## Goal and scope
 
@@ -55,7 +55,7 @@ Both routes exist under the tenant group and the subtenant group, with the same 
 
 | Field | Rules |
 | --- | --- |
-| `amount` | Required, minor units, 1 … 99 999 999 999 (same range as payment requests). |
+| `amount` | Required, minor units, 1 … 999 999 999 (same range as payment requests). |
 | `variable_symbol` | Optional, 1–10 digits. |
 | `message` | Optional, ≤ 140 chars. |
 | `payer_name`, `payer_account` | Optional; defaults `Sandbox Plátce`, `19-2000145399/0100`. `payer_account` must be a valid Czech account. |
@@ -111,14 +111,27 @@ When `GET /v1/sandbox` returns enabled, the SPA shows a "Sandbox" badge in the h
 
 Integration (Testcontainers, `Sandbox:Enabled = true` in a dedicated fixture or per-test host configuration):
 
-- Exact `sandbox/pay` → request `paid`, allocation exists, `payment_request.updated` and `transaction.recorded` delivered to a test endpoint with `environment = test`; a live endpoint of the same tenant receives nothing.
-- Partial, then remainder → `partially_paid` then `paid`; overpay → `overpaid`; wrong VS → unmatched transaction on the attention list; `outgoing` → `not_payment`, no transaction.
+- Exact `sandbox/pay` → request `paid`, allocation exists, `payment_request.updated` and `transaction.recorded` delivered to a test endpoint with `environment = test`; a live endpoint (the parent's, a tenant has one endpoint) receives nothing.
+- Partial payment, remainder, and overpay → unallocated test transactions (`amount_mismatch`) that manual allocation turns into `partially_paid`, `paid`, `overpaid`; wrong VS → unallocated `request_not_found` transaction (off the live attention list); `outgoing` → `not_payment`, no transaction.
 - Sandbox profile with the same `bank_reference` twice → one transaction (duplicate link); same reference with a different amount → disputed.
 - Česká spořitelna connection → parsed by `ceska_sporitelna`; `bank_reference` there → `400 field_not_supported_by_bank`.
 - Subtenant route with a management key; another tenant's connection → `404`.
 - Live-instance address → `409 sandbox_requires_test_address`; archived connection → `409`.
 - `Idempotency-Key` repeated → one message.
-- Sandbox off → routes `404`, sandbox profile not registered (a message from the sandbox sender to a non-0800 account is `unsupported`).
+- Sandbox off → routes `404`, sandbox profile not registered (a message from the sandbox sender to a non-0800 account is foreign mail: kept as metadata, never parsed).
 - `Sandbox:Enabled` in `Production` → startup fails with the message from section 1.
 
 Unit: renderer ↔ profile round-trips, sandbox profile trust (wrong sender, missing DMARC → untrusted), field validation.
+
+## Implementation notes
+
+- **Matching is exact, so only an exact payment pays by itself.** Spec 009 allows automatic matching only for an open request with nothing paid and exactly the received amount. A part payment, an overpayment, or a payment to a partly paid request is therefore recorded as an unallocated test transaction (`amount_mismatch`, `request_already_paid`, ...) and turns into `partially_paid`, `paid`, or `overpaid` with the existing manual allocation commands, as a real one would. The sandbox does not change matching, as section 1 says.
+- **The attention list shows live evidence only** (Feature 016), so an unmatched sandbox receipt is visible through the transaction list and its `transaction.recorded` test event, not on `GET .../attention`.
+- **Amount range** is the payment request range, 1 to 999 999 999 minor units (`SpaydPayment`), not the larger number first written here.
+- **Webhook isolation test.** A tenant has one webhook endpoint, so the test pairs a child's test endpoint with its parent's live `own_and_direct_children` endpoint.
+- **Sandbox off, other bank codes.** Without the sandbox profile such mail comes from a sender no profile knows, so Feature 008 screening classifies it as foreign; it is never parsed, so the message is not `unsupported` but `skipped`.
+- **Registry fallback.** `BankProfileRegistry` takes an optional fallback profile; the DI registration passes `SandboxBankProfile` only when `Sandbox:Enabled` is true. `GET /v1/sandbox` lists the profiles that have a renderer. Renderers (`ISandboxNoticeRenderer`: `CeskaSporitelnaRenderer`, `SandboxProfileRenderer`) and the profile live in `Pairrot.Core.Parsing/SandboxBankProfile.cs`; the service is `Pairrot.Infrastructure.Sandbox.SandboxService`, and `SandboxOptions` with its validator is in `Pairrot.Infrastructure.Sandbox` for the CLI to reuse.
+- **Idempotency.** The caller's input is stored as the delivery's raw payload, so a retry with the same key and input is the existing delivery (`202`, same message ID) and the same key with other input is `409 idempotency_key_conflict`. The key is 1 to 100 visible ASCII characters (`400 invalid_idempotency_key`).
+- **Validation codes** are `invalid_amount`, `invalid_variable_symbol`, `invalid_message`, `invalid_payer_name`, `invalid_payer_account`, `invalid_booked_at`, `invalid_bank_reference`, `invalid_direction`, plus `sandbox_bank_not_supported` (`409`) for a profile without a renderer. Values are written to the notice on one line (line breaks become spaces) so a value cannot forge another labeled line.
+- The effective `AllowTestEvidence` is `Matching:AllowTestEvidence || Sandbox:Enabled` in `PaymentLedger`. No migration was needed.
+- Sections 5 (`sandbox seed`) and 6 (SPA) are implemented separately from this backend work.

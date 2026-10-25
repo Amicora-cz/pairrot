@@ -56,4 +56,5 @@ public static class AuditActions
     public const string WebhookDeliveryRetried = "webhook_delivery.retried";
     public const string WebhookDeliveryAbandoned = "webhook_delivery.abandoned";
     public const string WebhookEventsReplayed = "webhook_events.replayed";
+    public const string SandboxPaymentSimulated = "sandbox.payment_simulated";
 }

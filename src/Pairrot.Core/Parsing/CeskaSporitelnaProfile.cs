@@ -197,9 +197,12 @@ public sealed partial class CeskaSporitelnaProfile : IBankProfile
 public sealed class BankProfileRegistry
 {
     private readonly Dictionary<string, IBankProfile> _byBankCode;
+    private readonly IBankProfile? _fallback;
 
-    public BankProfileRegistry(IEnumerable<IBankProfile> profiles)
+    /// <param name="fallback">Feature 021: handles bank codes without a profile; given only in sandbox mode.</param>
+    public BankProfileRegistry(IEnumerable<IBankProfile> profiles, IBankProfile? fallback = null)
     {
+        _fallback = fallback;
         _byBankCode = [];
         foreach (var profile in profiles)
         {
@@ -212,5 +215,8 @@ public sealed class BankProfileRegistry
 
     public IReadOnlyCollection<IBankProfile> All => _byBankCode.Values;
 
-    public IBankProfile? For(CzechBankAccount account) => _byBankCode.GetValueOrDefault(account.BankCode);
+    /// <summary>The bank-code profiles, then the fallback if there is one.</summary>
+    public IReadOnlyList<IBankProfile> Installed => _fallback is null ? [.. _byBankCode.Values] : [.. _byBankCode.Values, _fallback];
+
+    public IBankProfile? For(CzechBankAccount account) => _byBankCode.GetValueOrDefault(account.BankCode) ?? _fallback;
 }

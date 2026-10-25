@@ -39,6 +39,10 @@ public static class TenantEndpoints
         group.MapTenantMatching();
         group.MapTenantWebhooks();
         group.MapAttention(managesChildren: false);
+        if (app.IsEnabled())
+        {
+            group.MapTenantSandbox();
+        }
 
         // Browser sessions only: an ordinary tenant key cannot issue more keys for itself.
         var browser = group.MapGroup("").RequireAuthorization(PairrotClaims.Policies.Session);

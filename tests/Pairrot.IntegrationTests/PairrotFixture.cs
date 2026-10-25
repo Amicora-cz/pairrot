@@ -45,6 +45,11 @@ public sealed class PairrotFixture : IAsyncLifetime
     /// <summary>The parsing host with a fake webhook receiver (Features 010 and 011), created on first use.</summary>
     public WebhookHarness Webhooks => _webhooks ??= new WebhookHarness(this);
 
+    private SandboxHarness? _sandbox;
+
+    /// <summary>The API in sandbox mode (Feature 021) with a fake webhook receiver, created on first use.</summary>
+    public SandboxHarness Sandbox => _sandbox ??= new SandboxHarness(this);
+
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
@@ -74,6 +79,11 @@ public sealed class PairrotFixture : IAsyncLifetime
         if (_parsing is not null)
         {
             await _parsing.Factory.DisposeAsync();
+        }
+
+        if (_sandbox is not null)
+        {
+            await _sandbox.Factory.DisposeAsync();
         }
 
         await Factory.DisposeAsync();

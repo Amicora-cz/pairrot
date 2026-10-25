@@ -9,6 +9,7 @@ using Pairrot.Core.Tenants;
 using Pairrot.Core.Transactions;
 using Pairrot.Infrastructure.Jobs;
 using Pairrot.Infrastructure.Persistence;
+using Pairrot.Infrastructure.Sandbox;
 using Pairrot.Infrastructure.Tenants;
 using Pairrot.Infrastructure.Webhooks;
 
@@ -44,11 +45,13 @@ public sealed class MatchingOptionsValidator(IHostEnvironment environment) : IVa
 /// recalculated request, the payment change, and the audit event are saved together or not at all.
 /// </summary>
 public class PaymentLedger(
-    PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, WebhookRouter webhooks, IOptions<MatchingOptions> options)
+    PairrotDbContext db, BackgroundJobQueue jobs, TenantService tenants, WebhookRouter webhooks, IOptions<MatchingOptions> options,
+    IOptions<SandboxOptions> sandbox)
 {
     public static readonly Actor SystemActor = Actor.Administrator(ActorLabels.System);
 
-    public bool AllowTestEvidence => options.Value.AllowTestEvidence;
+    /// <summary>Feature 021: sandbox mode needs its test evidence to be matchable.</summary>
+    public bool AllowTestEvidence => options.Value.AllowTestEvidence || sandbox.Value.Enabled;
 
     public DateTimeOffset Now() => jobs.Now();
 
