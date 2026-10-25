@@ -15,6 +15,7 @@ import { TenantPicker } from './views/TenantPicker'
 import { Transactions } from './views/Transactions'
 import { Webhooks } from './views/Webhooks'
 import { StatusBadge } from './components'
+import { loadSandbox, SandboxContext, type SandboxStatus } from './sandboxStatus'
 
 type Tab =
   | 'configuration'
@@ -38,6 +39,12 @@ export default function App() {
   const [phase, setPhase] = useState<'loading' | 'anonymous' | 'ready'>('loading')
   const [notice, setNotice] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('configuration')
+  const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
+
+  // Feature 21: only a local API in sandbox mode answers; otherwise nothing sandbox-related is shown.
+  useEffect(() => {
+    void loadSandbox().then(setSandbox)
+  }, [])
 
   const applySummary = useCallback((next: SessionSummary) => {
     setExpectedTenant(next.selected_tenant_id)
@@ -108,9 +115,15 @@ export default function App() {
   }
 
   return (
+    <SandboxContext.Provider value={sandbox}>
     <div className="app">
       <header className="topbar">
         <strong>Pairrot · local test client</strong>
+        {sandbox && (
+          <span className="badge badge-sandbox" title="Simulated payments are processed like real notifications, as test data.">
+            Sandbox
+          </span>
+        )}
         <div className="topbar-tenant">
           {selected ? (
             <>
@@ -190,5 +203,6 @@ export default function App() {
         </>
       )}
     </div>
+    </SandboxContext.Provider>
   )
 }

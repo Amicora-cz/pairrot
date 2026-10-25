@@ -12,6 +12,8 @@ import {
 } from '../api'
 import { ErrorText, Section } from '../components'
 import { formatDate, formatMinorUnits, toMinorUnits, useAction, words } from '../util'
+import { SimulatePayment } from '../sandbox'
+import { useSandbox } from '../sandboxStatus'
 import { PaymentStatusBadge, RequestPayments } from './Matching'
 
 interface Filters {
@@ -36,6 +38,8 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
   const [cursor, setCursor] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [simulateId, setSimulateId] = useState<string | null>(null)
+  const sandbox = useSandbox()
   const { busy, error, run } = useAction()
 
   const loadPage = useCallback(
@@ -64,6 +68,7 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
   const replace = (next: PaymentRequest) =>
     setRequests((current) => (current.some((r) => r.id === next.id) ? current.map((r) => (r.id === next.id ? next : r)) : [next, ...current]))
   const opened = requests.find((r) => r.id === openId) ?? null
+  const simulated = requests.find((r) => r.id === simulateId) ?? null
 
   return (
     <>
@@ -157,6 +162,11 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
                     <button className="secondary" onClick={() => setOpenId(openId === r.id ? null : r.id)}>
                       {openId === r.id ? 'Close' : 'Open'}
                     </button>
+                    {sandbox && !readOnly && (
+                      <button className="secondary" onClick={() => setSimulateId(simulateId === r.id ? null : r.id)}>
+                        {simulateId === r.id ? 'Close simulation' : 'Simulate payment'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -169,6 +179,18 @@ export function ExpectedPayments({ prefix, owner, readOnly = false }: { prefix: 
           </button>
         )}
       </Section>
+
+      {sandbox && !readOnly && simulated && (
+        <Section title={`Sandbox: simulate payment of ${simulated.external_id}`}>
+          <SimulatePayment
+            key={simulated.id}
+            path={`${basePath}/${simulated.id}`}
+            request={simulated}
+            // Processing is asynchronous; reload the request shortly after to show its new state.
+            onDone={() => setTimeout(() => void api<PaymentRequest>('GET', `${basePath}/${simulated.id}`).then(replace, () => {}), 1500)}
+          />
+        </Section>
+      )}
 
       {opened && (
         <RequestDetail
