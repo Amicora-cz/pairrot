@@ -498,3 +498,9 @@ dotnet test
 ```
 
 Integration tests start their own PostgreSQL container through Testcontainers, so Docker must be running. They do not use the development database. Browser flows are tested over HTTPS with a cookie container, the antiforgery header, and the tenant header, the same way the SPA sends them. Inbound tests sign webhooks with the Svix library and run them through the real verifier, use a fake Receiving API behind the real HTTP client, and move an adjustable clock to test retries and leases. Payment QR PNGs are decoded with ZXing.Net, which shares no code with the QRCoder renderer, and SPAYD payloads are checked against the published example with a separate reader.
+
+## License
+
+Pairrot is licensed under the [Elastic License 2.0](LICENSE) (ELv2).
+
+You may use, copy, modify, and distribute Pairrot, and integrate it into your own products, including commercial ones. You may not offer Pairrot itself to third parties as a hosted or managed service — for example, running it as a payment-pairing (QR pairing) SaaS — where users get access to a substantial set of its features. You may not remove or obscure the licensing and copyright notices.
