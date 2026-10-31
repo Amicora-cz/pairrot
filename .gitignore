@@ -482,3 +482,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Private deploy tooling (kept local only)
+deploy/
+.claude/skills/deploy-vps/
