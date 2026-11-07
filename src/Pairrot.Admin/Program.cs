@@ -889,9 +889,15 @@ async Task<int> SeedSandboxAsync()
         else if (existing.Error is { Code: "not_found" })
         {
             SecretReveal? reveal = null;
-            var command = new CommandRequest(Guid.NewGuid().ToString(), "webhook_create", "sandbox-seed", actor);
+            // The receipt's fingerprint must be a SHA-256 hex digest (check constraint
+            // manual_command_receipts_fingerprint_format); computed like the API's webhook_create.
+            var events = WebhookEvents.Subscribable.ToArray();
+            var command = new CommandRequest(Guid.NewGuid().ToString(), "webhook_create",
+                ManualCommands.Fingerprint("webhook_create", null, webhookUrl.Trim(),
+                    Snake(WebhookScope.OwnAndDirectChildren), Snake(InboundEnvironment.Test), events),
+                actor);
             var created = await webhooks.CreateAsync(caller, webhookUrl, WebhookScope.OwnAndDirectChildren, InboundEnvironment.Test,
-                WebhookEvents.Subscribable.ToArray(), command, v => v, r => reveal = r);
+                events, command, v => v, r => reveal = r);
             if (created.Error is { } createError)
             {
                 return FailWebhook(createError);
