@@ -33,7 +33,7 @@ public static class SandboxEndpoints
     {
         if (app.IsEnabled())
         {
-            app.MapGet("/v1/sandbox", (SandboxService sandbox) => Results.Ok(new SandboxStatusResponse(true, sandbox.ProfileNames)));
+            app.MapGet("/v1/sandbox", (SandboxService sandbox) => Results.Ok(new SandboxStatusResponse(true, sandbox.ProfileNames, sandbox.EmitAsLive)));
         }
     }
 
@@ -126,7 +126,7 @@ public static class SandboxEndpoints
         http.GetRouteValue(SubtenantRouteValue) is string value && Guid.TryParse(value, out var id) ? id : null;
 }
 
-public sealed record SandboxStatusResponse(bool Enabled, IReadOnlyList<string> Profiles);
+public sealed record SandboxStatusResponse(bool Enabled, IReadOnlyList<string> Profiles, bool EmitAsLive = false);
 
 public sealed record SandboxPaymentResponse(
     Guid InboundMessageId,

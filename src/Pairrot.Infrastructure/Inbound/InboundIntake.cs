@@ -167,7 +167,8 @@ public class InboundIntake(
             ProviderInstanceId = instance.Id,
             SourceMessageId = delivery.SourceMessageId,
             SourceKind = instance.SourceKind,
-            Environment = instance.Environment,
+            // A test instance may be told to record live (sandbox EmitAsLive); a live one never changes.
+            Environment = instance.Environment == InboundEnvironment.Test ? delivery.EnvironmentOverride ?? instance.Environment : instance.Environment,
             RoutingState = route.State,
             TenantId = route.Address?.TenantId,
             BankConnectionId = route.Address?.BankConnectionId,

@@ -114,7 +114,8 @@ const string Usage = """
                                                the Development or Testing environment): ensure a
                                                sandbox root tenant (default sandbox.local) with one bank
                                                connection and its inbound address, issue new keys, and
-                                               with --webhook-url a test webhook endpoint. Idempotent;
+                                               with --webhook-url a test webhook endpoint (a live one
+                                               with Sandbox:EmitAsLive). Idempotent;
                                                keys and the signing secret are shown once.
 
     Common options:
@@ -861,13 +862,17 @@ async Task<int> SeedSandboxAsync()
     {
         var webhooks = services.GetRequiredService<WebhookService>();
         var caller = new WebhookCaller(tenant.Id, null, true, actor);
+        // Sandbox:EmitAsLive records simulated payments as live, so they reach a live endpoint only.
+        var hookEnvironment = builder.Configuration.GetValue<bool>("Sandbox:EmitAsLive")
+            ? InboundEnvironment.Live
+            : InboundEnvironment.Test;
         var existing = await webhooks.GetAsync(caller);
         if (existing.Value is { } view)
         {
             var endpoint = view.Endpoint;
-            if (endpoint.Environment != InboundEnvironment.Test)
+            if (endpoint.Environment != hookEnvironment)
             {
-                Console.Error.WriteLine($"The tenant's webhook endpoint {endpoint.Id} is not a test endpoint; sandbox events would not reach it.");
+                Console.Error.WriteLine($"The tenant's webhook endpoint {endpoint.Id} is not a {Snake(hookEnvironment)} endpoint; sandbox events would not reach it.");
                 return 1;
             }
 
@@ -894,16 +899,16 @@ async Task<int> SeedSandboxAsync()
             var events = WebhookEvents.Subscribable.ToArray();
             var command = new CommandRequest(Guid.NewGuid().ToString(), "webhook_create",
                 ManualCommands.Fingerprint("webhook_create", null, webhookUrl.Trim(),
-                    Snake(WebhookScope.OwnAndDirectChildren), Snake(InboundEnvironment.Test), events),
+                    Snake(WebhookScope.OwnAndDirectChildren), Snake(hookEnvironment), events),
                 actor);
-            var created = await webhooks.CreateAsync(caller, webhookUrl, WebhookScope.OwnAndDirectChildren, InboundEnvironment.Test,
+            var created = await webhooks.CreateAsync(caller, webhookUrl, WebhookScope.OwnAndDirectChildren, hookEnvironment,
                 events, command, v => v, r => reveal = r);
             if (created.Error is { } createError)
             {
                 return FailWebhook(createError);
             }
 
-            Console.WriteLine($"Created test webhook endpoint {reveal!.Endpoint.Endpoint.Id} for {webhookUrl.Trim()} (all event types, own and direct children).");
+            Console.WriteLine($"Created {Snake(hookEnvironment)} webhook endpoint {reveal!.Endpoint.Endpoint.Id} for {webhookUrl.Trim()} (all event types, own and direct children).");
             Console.WriteLine("Store this signing secret now; it cannot be shown again.");
             Console.WriteLine($"  signing key {reveal.KeyId}: {reveal.Secret}");
         }

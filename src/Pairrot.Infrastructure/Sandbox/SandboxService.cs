@@ -54,6 +54,9 @@ public class SandboxService(
 
     public bool Enabled => options.Value.Enabled;
 
+    /// <summary>Simulated payments are recorded as live (<see cref="SandboxOptions.EmitAsLive"/>).</summary>
+    public bool EmitAsLive => options.Value.EmitAsLive;
+
     /// <summary>The profiles sandbox notifications can be rendered for.</summary>
     public IReadOnlyList<string> ProfileNames => profiles.Installed.Select(p => p.Name).Where(n => renderers.Any(r => r.ProfileName == n)).ToList();
 
@@ -133,6 +136,7 @@ public class SandboxService(
             RawTransportPayload = JsonSerializer.Serialize(input with { IdempotencyKey = null }),
             SenderAuthentication = Authentication,
             Content = new InboundContentSnapshot(notice.Text, notice.Html, null, [address.Address], null, Authentication),
+            EnvironmentOverride = options.Value.EmitAsLive ? InboundEnvironment.Live : null,
         }, ct);
 
         switch (accepted.Status)

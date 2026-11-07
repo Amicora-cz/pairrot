@@ -110,7 +110,7 @@ A local webhook receiver needs `Webhooks:AllowedLocalDestinations` (for example 
 curl -k -X POST https://localhost:7017/v1/tenant/payment-requests/<id>/sandbox/pay -H "Authorization: Bearer <tenant key>" -H "Content-Type: application/json" -d '{}'
 ```
 
-The simulated payment is rendered as the bank's own notification (George HTML for bank code 0800, a simple test format for other bank codes) and goes through the real parsing, matching, review, and webhooks. Everything it creates is marked as test data and is delivered only to test webhook endpoints. `POST .../bank-connections/{id}/sandbox/incoming-payments` simulates any incoming payment, including partial payments, overpayments, wrong symbols, and duplicates. Details are in the [API reference](docs/api.md#sandbox-mode).
+The simulated payment is rendered as the bank's own notification (George HTML for bank code 0800, a simple test format for other bank codes) and goes through the real parsing, matching, review, and webhooks. Everything it creates is marked as test data and is delivered only to test webhook endpoints. With `Sandbox__EmitAsLive=true` the simulated payments are recorded as live instead and reach live endpoints, so an application that accepts live events only can be tested without changing it. `POST .../bank-connections/{id}/sandbox/incoming-payments` simulates any incoming payment, including partial payments, overpayments, wrong symbols, and duplicates. Details are in the [API reference](docs/api.md#sandbox-mode).
 
 ## Tech stack
 

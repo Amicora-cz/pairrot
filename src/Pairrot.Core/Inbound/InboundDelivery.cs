@@ -4,7 +4,8 @@ namespace Pairrot.Core.Inbound;
 /// The common intake contract. A delivery adapter builds it only after authenticating its own
 /// transport (a signed webhook, a trusted SMTP handoff, ...). It is internal: no tenant caller can
 /// submit one. Source kind and environment are not part of it; intake takes them from the trusted
-/// configuration of <see cref="ProviderInstanceId"/>.
+/// configuration of <see cref="ProviderInstanceId"/>. The one exception is
+/// <see cref="EnvironmentOverride"/>, set only by the sandbox.
 /// </summary>
 public sealed record InboundDelivery
 {
@@ -52,6 +53,12 @@ public sealed record InboundDelivery
 
     /// <summary>Deferred delivery: an opaque reference that this instance's content source can retrieve.</summary>
     public string? ContentReference { get; init; }
+
+    /// <summary>
+    /// Sandbox only (Feature 021, <c>Sandbox:EmitAsLive</c>): the environment to record the message in
+    /// instead of the instance's. Intake honors it only on a test instance. Never set by a transport adapter.
+    /// </summary>
+    public InboundEnvironment? EnvironmentOverride { get; init; }
 }
 
 /// <summary>

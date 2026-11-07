@@ -22,12 +22,17 @@ public sealed class SandboxHarness
 {
     private readonly PairrotFixture _fx;
 
-    public SandboxHarness(PairrotFixture fx)
+    public SandboxHarness(PairrotFixture fx, bool emitAsLive = false)
     {
         _fx = fx;
         Factory = fx.CreateFactory().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Sandbox:Enabled", "true");
+            if (emitAsLive)
+            {
+                builder.UseSetting("Sandbox:EmitAsLive", "true");
+            }
+
             builder.UseSetting("BackgroundJobs:Enabled", "false");
             builder.ConfigureTestServices(services =>
             {

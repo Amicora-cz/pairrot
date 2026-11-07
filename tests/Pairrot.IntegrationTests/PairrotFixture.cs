@@ -50,6 +50,11 @@ public sealed class PairrotFixture : IAsyncLifetime
     /// <summary>The API in sandbox mode (Feature 021) with a fake webhook receiver, created on first use.</summary>
     public SandboxHarness Sandbox => _sandbox ??= new SandboxHarness(this);
 
+    private SandboxHarness? _sandboxLive;
+
+    /// <summary>The same with <c>Sandbox:EmitAsLive</c>: simulated payments are recorded as live.</summary>
+    public SandboxHarness SandboxLive => _sandboxLive ??= new SandboxHarness(this, emitAsLive: true);
+
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
